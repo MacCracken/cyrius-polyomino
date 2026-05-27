@@ -41,9 +41,11 @@ jobs:
           cyrius build src/main.cyr build/${{ github.event.repository.name }}
 
       - name: Test
-        # v5.6.28: bare `cyrius test` picks up the [build].test entry
-        # AND auto-discovers tests/*.tcyr — avoids the previous
-        # `cyrius test src/test.cyr` form that hard-failed when the
-        # stub didn't exist (Issue 1) and also wouldn't ever exercise
-        # tests/${proj}.tcyr.
-        run: cyrius test
+        # Explicit .tcyr path — matches cyrius-bb / cyrius-doom. The
+        # released 6.0.1 toolchain's bare `cyrius test` auto-discovery
+        # reports "No .tcyr files found in tests/tcyr/ or tests/" in CI;
+        # naming the file is the reliable form. The grep gate fails the
+        # job unless the summary line reports 0 failures.
+        run: |
+          cyrius test tests/cyrius-polyomino.tcyr 2>&1 | tee /tmp/test_output
+          tail -1 /tmp/test_output | grep ', 0 failed'
