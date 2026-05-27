@@ -1,0 +1,74 @@
+# render.cyr — draw the world onto an offscreen framebuffer. See ADR 0003.
+#
+# Flat 2D grid: locked cells and the active piece are drawn as coloured
+# blocks, one CELL x CELL square per grid cell with a 1px gap so the grid
+# reads. Pure function of world state, so it is deterministic + testable
+# (assert a pixel). Ghost piece + next-queue rendering are later milestones.
+#
+# Requires (include order): piece, board, world, framebuf — then this.
+
+enum RenderConst {
+    CELL = 12;          # pixels per board cell
+}
+
+# Per-type block colour, packed r<<16 | g<<8 | b. Original palette, NOT the
+# canonical per-piece colours (ADR 0002) — a distinguishable, placeholder
+# set; the final palette + a colour-blind-friendly pass land in M6.
+# Type ids: 0=I 1=O 2=T 3=S 4=Z 5=J 6=L.
+fn type_rgb(t): i64 {
+    if (t == 0) { return (40 << 16) | (180 << 8) | 200; }   # I — teal
+    if (t == 1) { return (230 << 16) | (180 << 8) | 40; }   # O — amber
+    if (t == 2) { return (160 << 16) | (90 << 8) | 200; }   # T — violet
+    if (t == 3) { return (90 << 16) | (190 << 8) | 90; }    # S — green
+    if (t == 4) { return (220 << 16) | (80 << 8) | 100; }   # Z — rose
+    if (t == 5) { return (70 << 16) | (110 << 8) | 210; }   # J — blue
+    return (230 << 16) | (130 << 8) | 50;                   # L — orange
+}
+
+fn rgb_r(c): i64 { return (c >> 16) & 255; }
+fn rgb_g(c): i64 { return (c >> 8) & 255; }
+fn rgb_b(c): i64 { return c & 255; }
+
+# Draw the block for grid cell (col, row) in packed colour c. A 1px gap on
+# the right/bottom edges separates adjacent cells.
+fn draw_cell(f, col, row, c): i64 {
+    fb_fill_rect(f, col * CELL, row * CELL, CELL - 1, CELL - 1, rgb_r(c), rgb_g(c), rgb_b(c));
+    return 0;
+}
+
+# One frame: dark background, locked cells, then the active piece.
+fn render_world(f, wd): i64 {
+    fb_clear(f, 12, 12, 20);
+
+    var b = world_board(wd);
+    var w = board_w(b);
+    var h = board_h(b);
+    var r = 0;
+    var c = 0;
+    var v = 0;
+    while (r < h) {
+        c = 0;
+        while (c < w) {
+            v = board_at(b, c, r);
+            if (v != 0) { draw_cell(f, c, r, type_rgb(v - 1)); }
+            c = c + 1;
+        }
+        r = r + 1;
+    }
+
+    if (world_state(wd) == WS_PLAYING) {
+        var t = world_cur_type(wd);
+        var word = piece_word(t, world_cur_rot(wd));
+        var ox = world_cur_x(wd);
+        var oy = world_cur_y(wd);
+        var col = type_rgb(t);
+        var k = 0;
+        var cy = 0;
+        while (k < 4) {
+            cy = oy + cell_y(word, k);
+            if (cy >= 0) { draw_cell(f, ox + cell_x(word, k), cy, col); }
+            k = k + 1;
+        }
+    }
+    return 0;
+}

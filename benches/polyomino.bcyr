@@ -1,0 +1,92 @@
+# cyrius-polyomino benchmarks — the per-frame hot paths.
+# Run: cyrius bench benches/polyomino.bcyr  (or: cyrius bench)
+#
+# Sub-100ns ops use bench_batch_start/stop with a large batch to amortise
+# the clock_gettime overhead (see lib/bench.cyr). Project modules below;
+# core stdlib auto-included via cyrius.cyml [deps]. The bench harness is a
+# test-only dep — included here directly rather than carried in the
+# manifest, so it never weighs down the game binary.
+
+include "lib/bench.cyr"
+
+include "src/piece.cyr"
+include "src/board.cyr"
+include "src/score.cyr"
+include "src/world.cyr"
+include "src/framebuf.cyr"
+include "src/render.cyr"
+
+# A board with a partial stack in the bottom rows — realistic collision work.
+fn bench_board(): i64 {
+    var b = board_new(10, 20);
+    var r = 14;
+    var c = 0;
+    while (r < 20) {
+        c = 0;
+        while (c < 8) {
+            board_set(b, c, r, 1);
+            c = c + 1;
+        }
+        r = r + 1;
+    }
+    return b;
+}
+
+fn main(): i64 {
+    alloc_init();
+
+    # piece_word — rotation/cell lookup, called on every move/rotate/gravity
+    var bw = bench_new("piece_word");
+    var acc = 0;
+    var i = 0;
+    bench_batch_start(bw);
+    while (i < 1000000) {
+        acc = acc + piece_word(i % 7, i % 4);
+        i = i + 1;
+    }
+    bench_batch_stop(bw, 1000000);
+    bench_report(bw);
+
+    # board_collides — the hottest sim primitive (every move/rotate/drop)
+    var b = bench_board();
+    var word = piece_word(1, 0);
+    var bc = bench_new("board_collides");
+    i = 0;
+    bench_batch_start(bc);
+    while (i < 1000000) {
+        acc = acc + board_collides(b, word, 3, i % 18);
+        i = i + 1;
+    }
+    bench_batch_stop(bc, 1000000);
+    bench_report(bc);
+
+    # board_clear_lines — full-board scan + compaction (per lock)
+    var bcl = bench_new("board_clear_lines");
+    i = 0;
+    bench_batch_start(bcl);
+    while (i < 200000) {
+        acc = acc + board_clear_lines(b);
+        i = i + 1;
+    }
+    bench_batch_stop(bcl, 200000);
+    bench_report(bcl);
+
+    # render_world — one full frame to the offscreen surface
+    var b2 = bench_board();
+    var wd = world_new(b2, 42);
+    var f = fb_new(10 * CELL, 20 * CELL);
+    var br = bench_new("render_world");
+    i = 0;
+    bench_batch_start(br);
+    while (i < 5000) {
+        render_world(f, wd);
+        i = i + 1;
+    }
+    bench_batch_stop(br, 5000);
+    bench_report(br);
+
+    return acc - acc;
+}
+
+var r = main();
+syscall(60, r);

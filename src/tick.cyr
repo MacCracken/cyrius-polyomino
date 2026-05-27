@@ -1,0 +1,20 @@
+# tick.cyr — frame pacing. See ADR 0003.
+#
+# Sleeps a fixed ~1/60 s per frame. The simulation is fixed-step (gravity
+# advances on a frame counter, not wall-clock), so simple fixed-duration
+# pacing is enough; drift-correcting timing can come later if a frame
+# budget is ever missed. Used only by the interactive loop, never headless.
+# (Adapted from cyrius-bb/src/tick.cyr.)
+
+enum TickConst {
+    SYS_NANOSLEEP = 35;
+    FRAME_NS = 16666667;
+}
+
+fn frame_sleep(): i64 {
+    var ts[16];
+    store64(&ts, 0);
+    store64(&ts + 8, FRAME_NS);
+    syscall(SYS_NANOSLEEP, &ts, 0);
+    return 0;
+}

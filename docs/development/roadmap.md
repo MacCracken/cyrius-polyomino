@@ -47,9 +47,18 @@ and polish follow the same milestone cadence cyrius-bb uses.
 - Doc-tree per [first-party-documentation.md](https://github.com/MacCracken/agnosticos/blob/main/docs/development/first-party/first-party-documentation.md)
 - Toolchain pinned `cyrius = "6.0.1"` (matches cyrius-bb / cyrius-doom)
 
-### M1 — Playable core / "it's a game" (v0.2.0)
+### M1 — Playable core / "it's a game" (v0.2.0) — ✅ shipped 2026-05-26
 
 *The classic MVP. The point where pieces fall, lock, and lines clear.*
+
+Shipped: the deterministic integer core + self-rolled I/O, 121 headless
+assertions, P(-1) hardening pass (benchmarks + security audit, 2 LOW fixed).
+fmt/lint/vet clean; DCE binary 85,912 B. Detail in [`CHANGELOG.md`](../../CHANGELOG.md)
+`[0.2.0]`.
+
+**Carried forward** (not blocking): console playtest of the interactive loop +
+`/dev/fb0` present on a real Linux console — build/lint + headless-smoke-verified
+only so far (no console/framebuffer in dev/CI).
 
 Self-rolled on bare stdlib ([ADR 0003](../adr/0003-self-rolled-primitives.md)),
 following the cyrius-doom / cyrius-bb pattern:

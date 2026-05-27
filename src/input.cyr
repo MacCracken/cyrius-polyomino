@@ -1,0 +1,113 @@
+# input.cyr — keyboard input via Linux terminal raw mode. See ADR 0003.
+#
+# Non-canonical, non-blocking stdin (termios via ioctl, VMIN=0/VTIME=0).
+# `input_poll()` reads the bytes available this frame and returns a bitmask
+# of game actions. `poly_key_action()` is the pure single-byte decoder
+# (unit-tested); arrow-key escape sequences (ESC [ A/B/C/D) are decoded in
+# the poll loop. Pattern mirrors cyrius-bb / cyrius-doom src/input.cyr.
+#
+# The raw-tty I/O is not unit-tested (CI has no controlling terminal) —
+# only the pure decoder is. Requires `memcpy` from stdlib.
+#
+# Controls: a / left-arrow = move left, d / right = move right,
+# s / down = soft drop, w / up = rotate CW, z = rotate CCW,
+# space = soft drop, q / ESC = quit.
+
+enum InputAction {
+    ACT_LEFT = 1;
+    ACT_RIGHT = 2;
+    ACT_SOFT = 4;
+    ACT_ROT_CW = 8;
+    ACT_ROT_CCW = 16;
+    ACT_QUIT = 32;
+}
+
+enum TermConst {
+    TCGETS = 0x5401;
+    TCSETS = 0x5402;
+}
+
+var orig_termios[64];
+var raw_active = 0;
+
+# Single-byte key -> action bit. Pure; unit-tested.
+fn poly_key_action(ch): i64 {
+    if (ch == 97) { return ACT_LEFT; }      # 'a'
+    if (ch == 100) { return ACT_RIGHT; }    # 'd'
+    if (ch == 115) { return ACT_SOFT; }     # 's'
+    if (ch == 32) { return ACT_SOFT; }      # space
+    if (ch == 119) { return ACT_ROT_CW; }   # 'w'
+    if (ch == 122) { return ACT_ROT_CCW; }  # 'z'
+    if (ch == 113) { return ACT_QUIT; }     # 'q'
+    return 0;
+}
+
+# Put the terminal into raw, non-blocking mode (saves the old settings).
+# Returns -1 without changing modes if stdin is not a terminal (TCGETS
+# fails) — the caller still runs; input_poll just reads whatever is there.
+fn input_init(): i64 {
+    if (syscall(16, 0, TCGETS, &orig_termios) < 0) { return 0 - 1; }
+    var raw[64];
+    memcpy(&raw, &orig_termios, 60);
+    # c_lflag &= ~(ICANON|ECHO|ISIG) = ~(2|8|1) = ~11
+    var lflag = load32(&raw + 12);
+    lflag = lflag & (0 - 12);
+    store32(&raw + 12, lflag);
+    # c_iflag &= ~(IXON|ICRNL|BRKINT|INPCK|ISTRIP)
+    var iflag = load32(&raw);
+    iflag = iflag & (0 - 1331);
+    store32(&raw, iflag);
+    # c_cc[VMIN]=0 (non-blocking), c_cc[VTIME]=0
+    store8(&raw + 22, 0);
+    store8(&raw + 21, 0);
+    syscall(16, 0, TCSETS, &raw);
+    raw_active = 1;
+    return 0;
+}
+
+fn input_shutdown(): i64 {
+    if (raw_active == 1) {
+        syscall(16, 0, TCSETS, &orig_termios);
+        raw_active = 0;
+    }
+    return 0;
+}
+
+# Read all bytes available this frame; return the OR of action bits.
+# Non-blocking: returns 0 immediately when nothing is waiting. Arrow keys:
+# ESC [ A = up (rotate CW), B = down (soft), C = right, D = left.
+fn input_poll(): i64 {
+    var buf[32];
+    var n = syscall(0, 0, &buf, 32);
+    if (n <= 0) { return 0; }
+    var act = 0;
+    var pos = 0;
+    var ch = 0;
+    var s1 = 0;
+    var s2 = 0;
+    while (pos < n) {
+        ch = load8(&buf + pos);
+        if (ch == 27) {
+            s1 = 0;
+            s2 = 0;
+            if (pos + 2 < n) {
+                s1 = load8(&buf + pos + 1);
+                s2 = load8(&buf + pos + 2);
+            }
+            if (s1 == 91) {
+                if (s2 == 65) { act = act | ACT_ROT_CW; }
+                if (s2 == 66) { act = act | ACT_SOFT; }
+                if (s2 == 67) { act = act | ACT_RIGHT; }
+                if (s2 == 68) { act = act | ACT_LEFT; }
+                pos = pos + 3;
+                continue;
+            }
+            act = act | ACT_QUIT;
+            pos = pos + 1;
+        } else {
+            act = act | poly_key_action(ch);
+            pos = pos + 1;
+        }
+    }
+    return act;
+}

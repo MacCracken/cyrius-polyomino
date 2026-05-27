@@ -1,0 +1,74 @@
+# piece.cyr — the seven tetrominoes + their rotation states. See ADR 0003.
+#
+# A tetromino is the four-cell polyomino. There are seven one-sided
+# tetrominoes; this module is the pure, deterministic source of their
+# cell geometry — no allocation, no globals, fully unit-testable.
+#
+# Encoding. Each (type, rotation) is four cells inside a small box; each
+# cell is a packed byte `(x << 4) | y` (x, y in 0..3), and four cell bytes
+# pack into one 32-bit word (`word4`). `cell_x` / `cell_y` extract cell k.
+#
+# Type ids: 0=I 1=O 2=T 3=S 4=Z 5=J 6=L.
+# Rotation ids: 0=spawn, 1=CW, 2=180, 3=CCW.
+#
+# Coordinates are the canonical Super Rotation System (SRS) spawn-and-kick
+# layout — the modern guideline standard. M1 rotates naively (no wall
+# kicks); the SRS kick tables layer on in M3 (see roadmap). Using the SRS
+# cell coordinates now means M3 only has to add the kick offsets, not
+# re-lay the pieces.
+#
+# Source: SRS piece geometry as documented in the falling-block guideline
+# (see docs/standards/ when the kick tables land in M3). ADR 0001 — every
+# mechanic traces to a documented public source.
+
+fn pk(x, y): i64 { return (x << 4) | y; }
+
+fn word4(a, b, c, d): i64 { return a | (b << 8) | (c << 16) | (d << 24); }
+
+# Packed 4-cell word for tetromino `t` in rotation `r`.
+fn piece_word(t, r): i64 {
+    if (t == 0) {                                          # I
+        if (r == 0) { return word4(pk(0, 1), pk(1, 1), pk(2, 1), pk(3, 1)); }
+        if (r == 1) { return word4(pk(2, 0), pk(2, 1), pk(2, 2), pk(2, 3)); }
+        if (r == 2) { return word4(pk(0, 2), pk(1, 2), pk(2, 2), pk(3, 2)); }
+        return word4(pk(1, 0), pk(1, 1), pk(1, 2), pk(1, 3));
+    }
+    if (t == 1) {                                          # O (rotation-invariant)
+        return word4(pk(1, 0), pk(2, 0), pk(1, 1), pk(2, 1));
+    }
+    if (t == 2) {                                          # T
+        if (r == 0) { return word4(pk(1, 0), pk(0, 1), pk(1, 1), pk(2, 1)); }
+        if (r == 1) { return word4(pk(1, 0), pk(1, 1), pk(2, 1), pk(1, 2)); }
+        if (r == 2) { return word4(pk(0, 1), pk(1, 1), pk(2, 1), pk(1, 2)); }
+        return word4(pk(1, 0), pk(0, 1), pk(1, 1), pk(1, 2));
+    }
+    if (t == 3) {                                          # S
+        if (r == 0) { return word4(pk(1, 0), pk(2, 0), pk(0, 1), pk(1, 1)); }
+        if (r == 1) { return word4(pk(1, 0), pk(1, 1), pk(2, 1), pk(2, 2)); }
+        if (r == 2) { return word4(pk(1, 1), pk(2, 1), pk(0, 2), pk(1, 2)); }
+        return word4(pk(0, 0), pk(0, 1), pk(1, 1), pk(1, 2));
+    }
+    if (t == 4) {                                          # Z
+        if (r == 0) { return word4(pk(0, 0), pk(1, 0), pk(1, 1), pk(2, 1)); }
+        if (r == 1) { return word4(pk(2, 0), pk(1, 1), pk(2, 1), pk(1, 2)); }
+        if (r == 2) { return word4(pk(0, 1), pk(1, 1), pk(1, 2), pk(2, 2)); }
+        return word4(pk(1, 0), pk(0, 1), pk(1, 1), pk(0, 2));
+    }
+    if (t == 5) {                                          # J
+        if (r == 0) { return word4(pk(0, 0), pk(0, 1), pk(1, 1), pk(2, 1)); }
+        if (r == 1) { return word4(pk(1, 0), pk(2, 0), pk(1, 1), pk(1, 2)); }
+        if (r == 2) { return word4(pk(0, 1), pk(1, 1), pk(2, 1), pk(2, 2)); }
+        return word4(pk(1, 0), pk(1, 1), pk(0, 2), pk(1, 2));
+    }
+    # t == 6                                               # L
+    if (r == 0) { return word4(pk(2, 0), pk(0, 1), pk(1, 1), pk(2, 1)); }
+    if (r == 1) { return word4(pk(1, 0), pk(1, 1), pk(1, 2), pk(2, 2)); }
+    if (r == 2) { return word4(pk(0, 1), pk(1, 1), pk(2, 1), pk(0, 2)); }
+    return word4(pk(0, 0), pk(1, 0), pk(1, 1), pk(1, 2));
+}
+
+# Cell k (0..3) of a packed word: x is the high nibble, y the low nibble.
+fn cell_x(word, k): i64 { return (word >> (k * 8 + 4)) & 15; }
+fn cell_y(word, k): i64 { return (word >> (k * 8)) & 15; }
+
+fn piece_count(): i64 { return 7; }

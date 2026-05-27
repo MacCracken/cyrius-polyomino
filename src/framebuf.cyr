@@ -1,0 +1,99 @@
+# framebuf.cyr — offscreen RGB surface + PPM dump. See ADR 0003.
+#
+# An in-memory 3-bytes-per-pixel (R,G,B) surface, row-major. All drawing
+# happens off-screen, so it is unit-testable (assert pixels) and CI-
+# friendly — no window or /dev/fb0 required. present.cyr blits it to the
+# console framebuffer for real play. Colours are 0..255 integer channels;
+# coordinates are integer pixels. (Adapted from cyrius-bb/src/framebuf.cyr.)
+#
+# Heap struct, 3 x i64: width, height, pixels_ptr.
+
+enum FbField {
+    FB_W = 0;
+    FB_H = 8;
+    FB_PX = 16;
+    FB_SIZE = 24;
+}
+
+fn fb_new(w, h): i64 {
+    var f = alloc(FB_SIZE);
+    store64(f + FB_W, w);
+    store64(f + FB_H, h);
+    store64(f + FB_PX, alloc(w * h * 3));
+    return f;
+}
+
+fn fb_w(f): i64 { return load64(f + FB_W); }
+fn fb_h(f): i64 { return load64(f + FB_H); }
+fn fb_pixels(f): i64 { return load64(f + FB_PX); }
+
+# Set one pixel (bounds-checked; out-of-range is a silent no-op).
+fn fb_set(f, x, y, r, g, b): i64 {
+    if (x < 0) { return 0; }
+    if (y < 0) { return 0; }
+    if (x >= load64(f + FB_W)) { return 0; }
+    if (y >= load64(f + FB_H)) { return 0; }
+    var off = (y * load64(f + FB_W) + x) * 3;
+    var px = load64(f + FB_PX);
+    store8(px + off, r);
+    store8(px + off + 1, g);
+    store8(px + off + 2, b);
+    return 0;
+}
+
+# Read one channel (0=R, 1=G, 2=B) at (x, y). Bounds-checked to match
+# fb_set — out-of-range reads return 0 rather than touching memory.
+fn fb_get(f, x, y, ch): i64 {
+    if (x < 0) { return 0; }
+    if (y < 0) { return 0; }
+    if (x >= load64(f + FB_W)) { return 0; }
+    if (y >= load64(f + FB_H)) { return 0; }
+    var off = (y * load64(f + FB_W) + x) * 3;
+    return load8(load64(f + FB_PX) + off + ch);
+}
+
+# Filled rectangle in integer pixel coords, clipped to the surface. Loop
+# vars are declared once (Cyrius var is function-scoped).
+fn fb_fill_rect(f, x, y, w, h, r, g, b): i64 {
+    var fw = load64(f + FB_W);
+    var fh = load64(f + FB_H);
+    var x0 = x;
+    if (x0 < 0) { x0 = 0; }
+    var y0 = y;
+    if (y0 < 0) { y0 = 0; }
+    var x1 = x + w;
+    if (x1 > fw) { x1 = fw; }
+    var y1 = y + h;
+    if (y1 > fh) { y1 = fh; }
+    var yy = y0;
+    var xx = x0;
+    while (yy < y1) {
+        xx = x0;
+        while (xx < x1) {
+            fb_set(f, xx, yy, r, g, b);
+            xx = xx + 1;
+        }
+        yy = yy + 1;
+    }
+    return 0;
+}
+
+fn fb_clear(f, r, g, b): i64 {
+    fb_fill_rect(f, 0, 0, load64(f + FB_W), load64(f + FB_H), r, g, b);
+    return 0;
+}
+
+# Dump the surface as a binary PPM (P6). Returns 0 on success, -1 if the
+# file could not be opened. flags 65 = O_WRONLY|O_CREAT, mode 0644 (0x1A4).
+fn fb_write_ppm(f, path): i64 {
+    var fd = file_open(path, 65, 0x1A4);
+    if (fd < 0) { return 0 - 1; }
+    file_write(fd, "P6\n", 3);
+    fmt_int_fd(fd, load64(f + FB_W));
+    file_write(fd, " ", 1);
+    fmt_int_fd(fd, load64(f + FB_H));
+    file_write(fd, "\n255\n", 5);
+    file_write(fd, load64(f + FB_PX), load64(f + FB_W) * load64(f + FB_H) * 3);
+    file_close(fd);
+    return 0;
+}

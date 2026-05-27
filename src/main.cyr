@@ -1,11 +1,111 @@
-# cyrius-polyomino — main entry point
-# Stdlib auto-included via cyrius.cyml
+# cyrius-polyomino — main entry. Self-rolled, no engine deps (see ADR 0003).
+#
+# Two modes:
+#   cyrius-polyomino                 interactive — raw-tty input + /dev/fb0
+#                                    present, ~60 fps until quit / top-out
+#   cyrius-polyomino <frames> [seed] headless smoke — run N gravity steps
+#                                    from a seed, dump a PPM, print
+#                                    score / lines / level / state / cells
+#                                    (CI-friendly, deterministic, no tty)
+#
+# stdlib auto-included via cyrius.cyml; project modules in dependency order.
 
-fn main() {
-    alloc_init();
-    println("hello from cyrius-polyomino");
+include "src/piece.cyr"
+include "src/board.cyr"
+include "src/score.cyr"
+include "src/world.cyr"
+include "src/framebuf.cyr"
+include "src/render.cyr"
+include "src/input.cyr"
+include "src/tick.cyr"
+include "src/present.cyr"
+
+enum GameConst {
+    BOARD_W = 10;
+    BOARD_H = 20;
+    GRAVITY_FRAMES = 30;     # frames between gravity steps (~0.5 s @ 60 fps; M2 makes this a per-level curve)
+    DEFAULT_SEED = 2463534242;
+}
+
+fn build_world(seed): i64 {
+    var b = board_new(BOARD_W, BOARD_H);
+    return world_new(b, seed);
+}
+
+# Headless smoke: step gravity each frame from a fixed seed until top-out
+# or `frames` exhausted (no input — proves spawn / fall / lock / clear /
+# top-out deterministically). Dumps one frame; prints a state signature.
+fn run_headless(frames, seed): i64 {
+    var wd = build_world(seed);
+    var f = fb_new(BOARD_W * CELL, BOARD_H * CELL);
+    var i = 0;
+    while (i < frames) {
+        world_gravity(wd);
+        if (world_state(wd) == WS_GAME_OVER) { i = frames; }
+        i = i + 1;
+    }
+    render_world(f, wd);
+    fb_write_ppm(f, "build/cyrius-polyomino-headless.ppm");
+    println("cyrius-polyomino headless smoke — score lines level state cells:");
+    fmt_int_fd(1, world_score(wd));
+    file_write(1, " ", 1);
+    fmt_int_fd(1, world_lines(wd));
+    file_write(1, " ", 1);
+    fmt_int_fd(1, world_level(wd));
+    file_write(1, " ", 1);
+    fmt_int_fd(1, world_state(wd));
+    file_write(1, " ", 1);
+    fmt_int_fd(1, board_count(world_board(wd)));
+    file_write(1, "\n", 1);
     return 0;
 }
 
+# Interactive: ~60 fps loop. Moves/rotates apply immediately; gravity
+# advances every GRAVITY_FRAMES frames. Renders offscreen and blits to
+# /dev/fb0 (a no-op when no framebuffer is available).
+fn run_interactive(seed): i64 {
+    var wd = build_world(seed);
+    var f = fb_new(BOARD_W * CELL, BOARD_H * CELL);
+    input_init();
+    fb_present_open(f);
+    var running = 1;
+    var act = 0;
+    var grav = 0;
+    while (running == 1) {
+        frame_sleep();
+        act = input_poll();
+        if ((act & ACT_QUIT) != 0) { running = 0; }
+        if ((act & ACT_LEFT) != 0) { world_move(wd, 0 - 1); }
+        if ((act & ACT_RIGHT) != 0) { world_move(wd, 1); }
+        if ((act & ACT_ROT_CW) != 0) { world_rotate(wd, 1); }
+        if ((act & ACT_ROT_CCW) != 0) { world_rotate(wd, 0 - 1); }
+        if ((act & ACT_SOFT) != 0) { world_soft_drop(wd); }
+        grav = grav + 1;
+        if (grav >= GRAVITY_FRAMES) {
+            grav = 0;
+            world_gravity(wd);
+        }
+        if (world_state(wd) == WS_GAME_OVER) { running = 0; }
+        render_world(f, wd);
+        fb_present_blit(f);
+    }
+    fb_present_close();
+    input_shutdown();
+    return 0;
+}
+
+fn main(): i64 {
+    alloc_init();
+    args_init();
+    if (argc() >= 2) {
+        var seed = DEFAULT_SEED;
+        if (argc() >= 3) { seed = atoi(argv(2)); }
+        return run_headless(atoi(argv(1)), seed);
+    }
+    # Interactive: vary the seed per run so games differ, staying simple.
+    var s = DEFAULT_SEED + syscall(201, 0) * 1000003;
+    return run_interactive(s);
+}
+
 var r = main();
-syscall(SYS_EXIT, r);
+syscall(60, r);

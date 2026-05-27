@@ -1,0 +1,21 @@
+# score.cyr — line-clear scoring + level progression. See ADR 0001.
+#
+# Guideline base scoring: a Single is 100, a Double 300, a Triple 500, a
+# Tetris (four lines) 800, each multiplied by (level + 1). Level rises one
+# step per ten lines cleared. Pure integer math, deterministic.
+#
+# Source: the falling-block guideline scoring table (Single/Double/Triple/
+# Tetris = 100/300/500/800 x level). Soft-drop awards one point per cell
+# (applied in world.cyr). Combo / back-to-back / T-spin bonuses are the M3
+# guideline layer (see roadmap).
+
+fn score_for_lines(n, level): i64 {
+    var base = 0;
+    if (n == 1) { base = 100; }
+    if (n == 2) { base = 300; }
+    if (n == 3) { base = 500; }
+    if (n == 4) { base = 800; }
+    return base * (level + 1);
+}
+
+fn level_for_lines(lines): i64 { return lines / 10; }

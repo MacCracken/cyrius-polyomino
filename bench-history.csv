@@ -1,0 +1,2 @@
+date,version,binary_bytes,piece_word,board_collides,board_clear_lines,render_world
+2026-05-26,0.2.0,85912,23ns,48ns,179ns,374us

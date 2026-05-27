@@ -1,0 +1,158 @@
+# board.cyr — the playfield grid. See ADR 0003.
+#
+# A flat W x H byte grid, row-major (row 0 = top). Each cell is 0 (empty)
+# or 1..7 (a locked cell coloured by piece-type id + 1). The standard well
+# is 10 wide x 20 tall. Pure integer logic — no fixed-point, no float — so
+# collision, locking, and line-clear are bit-deterministic and headless-
+# testable (the replay / speedrun invariant; see CLAUDE.md).
+#
+# Collision takes a packed piece word (see piece.cyr) and an origin
+# (col, row); cells above the top (row < 0) are open air, never a
+# collision. Requires piece.cyr (cell_x / cell_y) included first.
+#
+# Heap struct, 3 x i64: width, height, cells_ptr.
+
+enum BoardField {
+    BD_W = 0;
+    BD_H = 8;
+    BD_CELLS = 16;
+    BD_SIZE = 24;
+}
+
+fn board_new(w, h): i64 {
+    var b = alloc(BD_SIZE);
+    store64(b + BD_W, w);
+    store64(b + BD_H, h);
+    var cells = alloc(w * h);
+    var n = w * h;
+    var i = 0;
+    while (i < n) {
+        store8(cells + i, 0);
+        i = i + 1;
+    }
+    store64(b + BD_CELLS, cells);
+    return b;
+}
+
+fn board_w(b): i64 { return load64(b + BD_W); }
+fn board_h(b): i64 { return load64(b + BD_H); }
+fn board_cells(b): i64 { return load64(b + BD_CELLS); }
+
+# Cell value at (col, row). Caller guarantees in-bounds.
+fn board_at(b, c, r): i64 { return load8(load64(b + BD_CELLS) + r * load64(b + BD_W) + c); }
+fn board_set(b, c, r, v): i64 {
+    store8(load64(b + BD_CELLS) + r * load64(b + BD_W) + c, v);
+    return 0;
+}
+
+# Would placing piece `word` at origin (ox, oy) collide? 1 = collision
+# (wall, floor, or an occupied cell), 0 = free. Cells above row 0 are open.
+fn board_collides(b, word, ox, oy): i64 {
+    var w = load64(b + BD_W);
+    var h = load64(b + BD_H);
+    var k = 0;
+    var cx = 0;
+    var cy = 0;
+    while (k < 4) {
+        cx = ox + cell_x(word, k);
+        cy = oy + cell_y(word, k);
+        if (cx < 0) { return 1; }
+        if (cx >= w) { return 1; }
+        if (cy >= h) { return 1; }
+        if (cy >= 0) {
+            if (board_at(b, cx, cy) != 0) { return 1; }
+        }
+        k = k + 1;
+    }
+    return 0;
+}
+
+# Stamp tetromino `t` (rotation `r`) into the grid at (ox, oy), writing
+# `t + 1` into each cell. Cells above the top are dropped (defensive).
+fn board_lock(b, t, r, ox, oy): i64 {
+    var word = piece_word(t, r);
+    var w = load64(b + BD_W);
+    var h = load64(b + BD_H);
+    var k = 0;
+    var cx = 0;
+    var cy = 0;
+    while (k < 4) {
+        cx = ox + cell_x(word, k);
+        cy = oy + cell_y(word, k);
+        if (cy >= 0) {
+            if (cy < h) {
+                if (cx >= 0) {
+                    if (cx < w) { board_set(b, cx, cy, t + 1); }
+                }
+            }
+        }
+        k = k + 1;
+    }
+    return 0;
+}
+
+# Is row `r` completely filled?
+fn board_row_full(b, r): i64 {
+    var w = load64(b + BD_W);
+    var base = load64(b + BD_CELLS) + r * w;
+    var c = 0;
+    while (c < w) {
+        if (load8(base + c) == 0) { return 0; }
+        c = c + 1;
+    }
+    return 1;
+}
+
+fn board_copy_row(b, src, dst): i64 {
+    var w = load64(b + BD_W);
+    var cells = load64(b + BD_CELLS);
+    memcpy(cells + dst * w, cells + src * w, w);
+    return 0;
+}
+
+fn board_clear_row(b, r): i64 {
+    var w = load64(b + BD_W);
+    var base = load64(b + BD_CELLS) + r * w;
+    var c = 0;
+    while (c < w) {
+        store8(base + c, 0);
+        c = c + 1;
+    }
+    return 0;
+}
+
+# Remove every full row and compact the rest downward. Returns the number
+# of rows cleared. Single bottom-up pass: keep-rows are copied down into a
+# write cursor, then the rows above the cursor are blanked. The write
+# cursor never gets ahead of the read cursor, so the in-place copy is safe.
+fn board_clear_lines(b): i64 {
+    var h = load64(b + BD_H);
+    var wr = h - 1;
+    var rd = h - 1;
+    while (rd >= 0) {
+        if (board_row_full(b, rd) == 0) {
+            if (wr != rd) { board_copy_row(b, rd, wr); }
+            wr = wr - 1;
+        }
+        rd = rd - 1;
+    }
+    var r = wr;
+    while (r >= 0) {
+        board_clear_row(b, r);
+        r = r - 1;
+    }
+    return wr + 1;
+}
+
+# Count occupied cells — a cheap board signature for tests + smoke output.
+fn board_count(b): i64 {
+    var n = load64(b + BD_W) * load64(b + BD_H);
+    var cells = load64(b + BD_CELLS);
+    var i = 0;
+    var c = 0;
+    while (i < n) {
+        if (load8(cells + i) != 0) { c = c + 1; }
+        i = i + 1;
+    }
+    return c;
+}

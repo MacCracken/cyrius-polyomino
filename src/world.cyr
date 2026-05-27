@@ -1,0 +1,174 @@
+# world.cyr — game state + deterministic step. See ADR 0003.
+#
+# Holds the board, the active piece (type / rotation / origin), the next
+# piece, the piece RNG state, and score / lines / level / play-state. Every
+# mutator is a pure function of the current state, so a fixed seed + input
+# sequence produces a bit-identical result (the replay / speedrun
+# invariant; see CLAUDE.md).
+#
+# Requires (include order): piece.cyr, board.cyr, score.cyr — then this.
+#
+# RNG. A 64-bit LCG (Knuth/PCG multiplier); piece pick uses the upper bits
+# masked non-negative, mod 7. Uniform is fine for M1 — the 7-bag
+# randomizer replaces it in M3 (roadmap). The state lives in the world so
+# the stream is per-game and seedable, not a process global.
+#
+# Heap struct, 11 x i64.
+
+enum WorldState {
+    WS_PLAYING = 0;
+    WS_GAME_OVER = 1;
+}
+
+enum WorldField {
+    WO_BOARD = 0;
+    WO_CUR_TYPE = 8;
+    WO_CUR_ROT = 16;
+    WO_CUR_X = 24;
+    WO_CUR_Y = 32;
+    WO_NEXT = 40;
+    WO_RNG = 48;
+    WO_SCORE = 56;
+    WO_LINES = 64;
+    WO_LEVEL = 72;
+    WO_STATE = 80;
+    WO_SIZE = 88;
+}
+
+enum Spawn {
+    SPAWN_X = 3;     # 4-wide piece box centred in a 10-wide well (cols 3..6)
+    SPAWN_Y = 0;
+}
+
+# --- RNG ---------------------------------------------------------------
+
+fn rng_next_state(s): i64 { return s * 6364136223846793005 + 1442695040888963407; }
+
+# 0..6 from a state word — upper bits, masked to a non-negative 31-bit int.
+fn rng_pick7(s): i64 { return ((s >> 33) & 0x7FFFFFFF) % 7; }
+
+# Advance the world RNG and return the next piece type (0..6).
+fn world_next_type(wd): i64 {
+    var s = rng_next_state(load64(wd + WO_RNG));
+    store64(wd + WO_RNG, s);
+    return rng_pick7(s);
+}
+
+# --- accessors ---------------------------------------------------------
+
+fn world_board(wd): i64 { return load64(wd + WO_BOARD); }
+fn world_cur_type(wd): i64 { return load64(wd + WO_CUR_TYPE); }
+fn world_cur_rot(wd): i64 { return load64(wd + WO_CUR_ROT); }
+fn world_cur_x(wd): i64 { return load64(wd + WO_CUR_X); }
+fn world_cur_y(wd): i64 { return load64(wd + WO_CUR_Y); }
+fn world_next(wd): i64 { return load64(wd + WO_NEXT); }
+fn world_score(wd): i64 { return load64(wd + WO_SCORE); }
+fn world_lines(wd): i64 { return load64(wd + WO_LINES); }
+fn world_level(wd): i64 { return load64(wd + WO_LEVEL); }
+fn world_state(wd): i64 { return load64(wd + WO_STATE); }
+
+# --- lifecycle ---------------------------------------------------------
+
+# Spawn the next piece as the active piece and draw a fresh next. Tops out
+# (GAME_OVER) if the spawned piece immediately collides.
+fn world_spawn(wd): i64 {
+    store64(wd + WO_CUR_TYPE, load64(wd + WO_NEXT));
+    store64(wd + WO_NEXT, world_next_type(wd));
+    store64(wd + WO_CUR_ROT, 0);
+    store64(wd + WO_CUR_X, SPAWN_X);
+    store64(wd + WO_CUR_Y, SPAWN_Y);
+    var b = load64(wd + WO_BOARD);
+    if (board_collides(b, piece_word(load64(wd + WO_CUR_TYPE), 0), SPAWN_X, SPAWN_Y) == 1) {
+        store64(wd + WO_STATE, WS_GAME_OVER);
+    }
+    return 0;
+}
+
+# New game on board `b`, RNG seeded with `seed` (pass a non-zero seed).
+fn world_new(b, seed): i64 {
+    var wd = alloc(WO_SIZE);
+    store64(wd + WO_BOARD, b);
+    store64(wd + WO_RNG, seed);
+    store64(wd + WO_SCORE, 0);
+    store64(wd + WO_LINES, 0);
+    store64(wd + WO_LEVEL, 0);
+    store64(wd + WO_STATE, WS_PLAYING);
+    store64(wd + WO_NEXT, world_next_type(wd));   # first draw -> next slot
+    world_spawn(wd);                              # next -> cur, draw a new next
+    return wd;
+}
+
+# --- moves -------------------------------------------------------------
+
+# Shift the active piece by dcol columns. Returns 1 if it moved, 0 if blocked.
+fn world_move(wd, dcol): i64 {
+    if (load64(wd + WO_STATE) != WS_PLAYING) { return 0; }
+    var b = load64(wd + WO_BOARD);
+    var word = piece_word(load64(wd + WO_CUR_TYPE), load64(wd + WO_CUR_ROT));
+    var nx = load64(wd + WO_CUR_X) + dcol;
+    if (board_collides(b, word, nx, load64(wd + WO_CUR_Y)) == 0) {
+        store64(wd + WO_CUR_X, nx);
+        return 1;
+    }
+    return 0;
+}
+
+# Rotate by dir (+1 CW, -1 CCW). Naive — no wall kicks (SRS kicks are M3).
+# Returns 1 if it rotated, 0 if blocked.
+fn world_rotate(wd, dir): i64 {
+    if (load64(wd + WO_STATE) != WS_PLAYING) { return 0; }
+    var b = load64(wd + WO_BOARD);
+    var nr = (load64(wd + WO_CUR_ROT) + dir + 4) % 4;
+    var word = piece_word(load64(wd + WO_CUR_TYPE), nr);
+    if (board_collides(b, word, load64(wd + WO_CUR_X), load64(wd + WO_CUR_Y)) == 0) {
+        store64(wd + WO_CUR_ROT, nr);
+        return 1;
+    }
+    return 0;
+}
+
+# Lock the active piece, clear any full lines, score them, advance the
+# level, and spawn the next piece. Returns the number of lines cleared.
+fn world_lock_sequence(wd): i64 {
+    var b = load64(wd + WO_BOARD);
+    board_lock(b, load64(wd + WO_CUR_TYPE), load64(wd + WO_CUR_ROT), load64(wd + WO_CUR_X), load64(wd + WO_CUR_Y));
+    var cleared = board_clear_lines(b);
+    if (cleared > 0) {
+        var lines = load64(wd + WO_LINES) + cleared;
+        store64(wd + WO_LINES, lines);
+        var level = load64(wd + WO_LEVEL);
+        store64(wd + WO_SCORE, load64(wd + WO_SCORE) + score_for_lines(cleared, level));
+        store64(wd + WO_LEVEL, level_for_lines(lines));
+    }
+    world_spawn(wd);
+    return cleared;
+}
+
+# One gravity step: drop the piece a row, or lock it if it can't fall.
+# Returns lines cleared on a lock (0 otherwise).
+fn world_gravity(wd): i64 {
+    if (load64(wd + WO_STATE) != WS_PLAYING) { return 0; }
+    var b = load64(wd + WO_BOARD);
+    var word = piece_word(load64(wd + WO_CUR_TYPE), load64(wd + WO_CUR_ROT));
+    var ny = load64(wd + WO_CUR_Y) + 1;
+    if (board_collides(b, word, load64(wd + WO_CUR_X), ny) == 0) {
+        store64(wd + WO_CUR_Y, ny);
+        return 0;
+    }
+    return world_lock_sequence(wd);
+}
+
+# Player-driven soft drop: like gravity, but a successful drop scores one
+# point (guideline soft-drop bonus). Returns lines cleared on a lock.
+fn world_soft_drop(wd): i64 {
+    if (load64(wd + WO_STATE) != WS_PLAYING) { return 0; }
+    var b = load64(wd + WO_BOARD);
+    var word = piece_word(load64(wd + WO_CUR_TYPE), load64(wd + WO_CUR_ROT));
+    var ny = load64(wd + WO_CUR_Y) + 1;
+    if (board_collides(b, word, load64(wd + WO_CUR_X), ny) == 0) {
+        store64(wd + WO_CUR_Y, ny);
+        store64(wd + WO_SCORE, load64(wd + WO_SCORE) + 1);
+        return 0;
+    }
+    return world_lock_sequence(wd);
+}

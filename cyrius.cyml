@@ -16,7 +16,7 @@ output = "build/cyrius-polyomino"
 # the critical path. M1–M3 (board, pieces, loop, render, input) need only the
 # stdlib below; expand as modules land.
 [deps]
-stdlib = ["string", "fmt", "alloc", "io", "vec", "str", "syscalls", "assert"]
+stdlib = ["string", "alloc", "fmt", "io", "fs", "str", "vec", "syscalls", "args", "assert"]
 
 # Earmarked external deps — dormant until their milestone, kept commented so
 # the build stays warning-free (an unused dep just adds link warnings + weight).

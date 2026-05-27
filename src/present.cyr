@@ -1,0 +1,56 @@
+# present.cyr — best-effort /dev/fb0 blit of an offscreen surface. ADR 0003.
+#
+# Copies the 24-bpp RGB surface (framebuf.cyr) to the Linux framebuffer as
+# 32-bpp little-endian BGRX. Assumes the framebuffer is 32-bpp and its
+# resolution matches the surface (no stride / mode probing yet — M6).
+#
+# Environment-specific and NOT unit-tested — there is no writable
+# framebuffer under a desktop (X/Wayland) session, so this is exercised
+# only during real play on a Linux text console. Degrades gracefully: if
+# /dev/fb0 will not open, blits become no-ops and the game still runs the
+# simulation + input. Requires framebuf.cyr. (Adapted from cyrius-bb.)
+
+var present_fd = 0 - 1;
+var present_buf = 0;
+
+# Open /dev/fb0 and allocate the conversion buffer sized to the surface.
+# Returns the fd, or -1 if the framebuffer is unavailable.
+fn fb_present_open(f): i64 {
+    present_fd = file_open("/dev/fb0", 2, 0);
+    if (present_fd < 0) {
+        present_fd = 0 - 1;
+        return 0 - 1;
+    }
+    present_buf = alloc(fb_w(f) * fb_h(f) * 4);
+    return present_fd;
+}
+
+# Blit the surface to the framebuffer. No-op if /dev/fb0 was not opened.
+fn fb_present_blit(f): i64 {
+    if (present_fd < 0) { return 0; }
+    var n = fb_w(f) * fb_h(f);
+    var src = fb_pixels(f);
+    var i = 0;
+    var si = 0;
+    var di = 0;
+    while (i < n) {
+        si = i * 3;
+        di = i * 4;
+        store8(present_buf + di, load8(src + si + 2));      # B
+        store8(present_buf + di + 1, load8(src + si + 1));  # G
+        store8(present_buf + di + 2, load8(src + si));      # R
+        store8(present_buf + di + 3, 0);                    # X
+        i = i + 1;
+    }
+    syscall(8, present_fd, 0, 0);                           # lseek to 0
+    file_write(present_fd, present_buf, n * 4);
+    return 0;
+}
+
+fn fb_present_close(): i64 {
+    if (present_fd >= 0) {
+        file_close(present_fd);
+        present_fd = 0 - 1;
+    }
+    return 0;
+}
