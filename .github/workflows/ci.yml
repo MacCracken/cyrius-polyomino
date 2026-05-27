@@ -40,6 +40,10 @@ jobs:
           mkdir -p build
           cyrius build src/main.cyr build/${{ github.event.repository.name }}
 
+      - name: Lint
+        run: |
+          for f in src/*.cyr; do cyrius lint "$f"; done
+
       - name: Test
         # Explicit .tcyr path — matches cyrius-bb / cyrius-doom. The
         # released 6.0.1 toolchain's bare `cyrius test` auto-discovery
@@ -49,3 +53,68 @@ jobs:
         run: |
           cyrius test tests/cyrius-polyomino.tcyr 2>&1 | tee /tmp/test_output
           tail -1 /tmp/test_output | grep ', 0 failed'
+
+  docs:
+    name: Documentation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check required files
+        run: |
+          for doc in README.md CHANGELOG.md VERSION LICENSE CLAUDE.md CONTRIBUTING.md SECURITY.md CODE_OF_CONDUCT.md cyrius.cyml; do
+            test -f "$doc" && echo "OK: $doc" || { echo "MISSING: $doc"; exit 1; }
+          done
+
+      - name: Verify version consistency
+        # VERSION is the single source of truth; cyrius.cyml uses the
+        # ${file:VERSION} template — resolve it for the comparison. Same
+        # shape as cyrius-bb / cyrius-doom CI.
+        run: |
+          FILE_VERSION=$(cat VERSION | tr -d '[:space:]')
+          CYML_RAW=$(grep '^version = ' cyrius.cyml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          if [ "$CYML_RAW" = "\${file:VERSION}" ]; then
+              CYML_VERSION="$FILE_VERSION"
+          else
+              CYML_VERSION="$CYML_RAW"
+          fi
+          [ "$FILE_VERSION" = "$CYML_VERSION" ] || { echo "VERSION ($FILE_VERSION) != cyrius.cyml ($CYML_RAW)"; exit 1; }
+          grep -q "$FILE_VERSION" CHANGELOG.md || { echo "FAIL: version not in CHANGELOG.md"; exit 1; }
+          echo "Version consistent: $FILE_VERSION (cyml: $CYML_RAW)"
+
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    # Pattern scan per first-party-standards § Security Hardening. Cheap,
+    # toolchain-free greps over src/ that fail the job on a finding. The
+    # P(-1) audit (docs/audit/) is the deep pass; this is the per-push net.
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: No shell-injection sinks
+        run: |
+          if grep -rnE 'sys_system|exec_cmd' src/; then
+            echo "::error::shell-injection sink in src/ — never pass untrusted input to a shell"
+            exit 1
+          fi
+          echo "OK: no sys_system / exec_cmd in src/"
+
+      - name: No raw execve
+        run: |
+          if grep -rnE 'execve|syscall\([[:space:]]*59[[:space:]]*,' src/; then
+            echo "::error::raw execve in src/"
+            exit 1
+          fi
+          echo "OK: no raw execve in src/"
+
+      - name: No oversized stack buffers (>= 64KB)
+        # var name[N] is N BYTES; a stack buffer >= 64KB risks a guard-page
+        # smash. Flags any literal-sized stack buffer at or above 65536.
+        run: |
+          BIG=$(grep -rnoE 'var [A-Za-z_][A-Za-z0-9_]*\[[0-9]+\]' src/ | awk -F'[][]' '$2+0 >= 65536')
+          if [ -n "$BIG" ]; then
+            echo "::error::stack buffer >= 64KB in src/:"
+            echo "$BIG"
+            exit 1
+          fi
+          echo "OK: no stack buffers >= 64KB in src/"
