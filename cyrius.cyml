@@ -1,0 +1,39 @@
+[package]
+name = "cyrius-polyomino"
+version = "${file:VERSION}"
+description = "An original falling-block puzzle in Cyrius — generic homage to the 1984-era genre, self-rolled on bare stdlib."
+license = "GPL-3.0-only"
+repository = "https://github.com/MacCracken/cyrius-polyomino"
+language = "cyrius"
+cyrius = "6.0.1"
+
+[build]
+entry = "src/main.cyr"
+test = "src/test.cyr"
+output = "build/cyrius-polyomino"
+
+# Self-rolled on bare Cyrius stdlib (ADR 0003) — no engine/GPU/physics deps on
+# the critical path. M1–M3 (board, pieces, loop, render, input) need only the
+# stdlib below; expand as modules land.
+[deps]
+stdlib = ["string", "fmt", "alloc", "io", "vec", "str", "syscalls", "assert"]
+
+# Earmarked external deps — dormant until their milestone, kept commented so
+# the build stays warning-free (an unused dep just adds link warnings + weight).
+#
+# vani — audio device I/O (M4 sound effects). Cyrius-native; cyrius-doom pins 0.9.4.
+# [deps.vani]
+# git = "https://github.com/MacCracken/vani.git"
+# tag = "0.9.4"
+# modules = ["dist/vani-core.cyr"]
+#
+# sankoch — high-score file compression (M5). sigil — high-score integrity hash (M5).
+# [deps.sankoch]
+# git = "https://github.com/MacCracken/sankoch.git"
+# tag = "2.1.0"
+# modules = ["dist/sankoch.cyr"]
+#
+# [deps.sigil]
+# git = "https://github.com/MacCracken/sigil.git"
+# tag = "2.9.3"
+# modules = ["dist/sigil.cyr"]
