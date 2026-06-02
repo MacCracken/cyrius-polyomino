@@ -5,14 +5,18 @@
 
 ## Version
 
-**0.2.0 — M1 playable core complete** (cut 2026-05-26). Classic MVP: 10×20
-well, seven tetrominoes, gravity, line clears + scoring, self-rolled renderer /
-input / loop. Followed by the P(-1) hardening pass — benchmarks, security
-audit, two LOW fixes. (Prior: 0.1.0 — scaffold + first-party alignment,
-2026-05-26.) The version files are bumped to 0.2.0; the git tag is the user's to
+**0.2.1 — framebuffer geometry fix** (cut 2026-06-01). `present.cyr` now
+probes real `/dev/fb0` `xres`/`yres`/`line_length` via `FBIOGET_{V,F}SCREENINFO`
+and integer-scales + centres the blit, replacing the surface-sized packed-block
+assumption that tiled the frame into the top band of a real panel (the
+self-describing PPM/headless path masked it). Same fix as cyrius-bb / cyrius-doom
+v0.27.4. (Prior: 0.2.0 — M1 playable core complete, 2026-05-26: 10×20 well,
+seven tetrominoes, gravity, line clears + scoring, self-rolled renderer / input /
+loop, plus the P(-1) hardening pass. 0.1.0 — scaffold + first-party alignment,
+2026-05-26.) The version files are bumped to 0.2.1; the git tag is the user's to
 create.
 
-- **DCE binary**: 85,912 B (x86_64, static, stripped).
+- **DCE binary**: 87,576 B (x86_64, static, stripped) — +1,664 B vs 0.2.0 (fb geometry probe + scaled blit).
 - **Tests**: 121 assertions, 0 failed. fmt + lint + vet clean.
 - **Benchmarks**: piece_word 22ns · board_collides 48ns · board_clear_lines 173ns · render_world 381µs/frame (`bench-history.csv`).
 - **Security**: P(-1) audit clean — 0 CRIT/HIGH/MED, 2 LOW fixed ([2026-05-26 audit](../audit/2026-05-26-audit.md)).
@@ -36,7 +40,7 @@ per [ADR 0003](../adr/0003-self-rolled-primitives.md):
 - `src/world.cyr` — state + step: seedable LCG RNG, spawn/top-out, move, naïve rotate, gravity, soft drop, lock→clear→score→spawn
 - `src/score.cyr` — guideline base scoring (100/300/500/800 × level) + level-per-10-lines
 - `src/framebuf.cyr` / `src/render.cyr` — offscreen surface + flat-cell renderer (placeholder palette, ADR 0002) + PPM dump
-- `src/input.cyr` / `src/tick.cyr` / `src/present.cyr` — raw-tty input + decoder, ~60 fps pacing, `/dev/fb0` blit
+- `src/input.cyr` / `src/tick.cyr` / `src/present.cyr` — raw-tty input + decoder, ~60 fps pacing, geometry-probed (`FBIOGET_{V,F}SCREENINFO`) integer-scaled + centred `/dev/fb0` blit
 - `src/main.cyr` — interactive loop + deterministic headless `<frames> [seed]` smoke
 
 Planned: `src/rng.cyr` split + 7-bag (M3), `src/audio.cyr` (M4, via vani),

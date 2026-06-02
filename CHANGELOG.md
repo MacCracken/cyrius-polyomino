@@ -4,6 +4,29 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-06-01
+
+Framebuffer geometry fix. The live `/dev/fb0` present path assumed the
+console was exactly the surface size with a packed `width*4` pitch and
+blitted a tightly-packed block at offset 0. On any real panel (e.g.
+1920×1080) this tiled the surface horizontally and collapsed it into the
+top band of the screen. The offscreen surface + PPM path is
+self-describing, so the headless smoke never caught it. `present.cyr` now
+probes the real geometry and integer-scales + centres the blit — the same
+fix already shipped in cyrius-bb (and cyrius-doom v0.27.4).
+
+### Fixed
+- **`present.cyr` — real panel geometry.** `fb_present_open` now issues
+  `FBIOGET_VSCREENINFO` (0x4600) + `FBIOGET_FSCREENINFO` (0x4602) ioctls
+  to read `xres` / `yres` / `line_length`, with defensive fallbacks if the
+  driver reports nothing. Computes the largest integer scale (capped at
+  4×) that fits both axes and the centring letterbox offsets once at open,
+  and blacks the whole screen once.
+- **`fb_present_blit` — correct stride-aware blit.** Builds each scaled
+  BGRX row in a scratch buffer and `lseek`s to the true `(oy + sy*s)*stride
+  + ox*4` offset per row instead of streaming a packed block from offset 0,
+  so the frame lands centred at the right pitch instead of tiling.
+
 ## [0.2.0] - 2026-05-26
 
 ### Added

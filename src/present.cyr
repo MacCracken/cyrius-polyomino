@@ -1,49 +1,119 @@
 # present.cyr — best-effort /dev/fb0 blit of an offscreen surface. ADR 0003.
 #
 # Copies the 24-bpp RGB surface (framebuf.cyr) to the Linux framebuffer as
-# 32-bpp little-endian BGRX. Assumes the framebuffer is 32-bpp and its
-# resolution matches the surface (no stride / mode probing yet — M6).
+# 32-bpp little-endian BGRX. Probes the real framebuffer geometry
+# (FBIOGET_VSCREENINFO / FSCREENINFO) and integer-scales + centres the
+# surface, instead of assuming the console is exactly the surface size —
+# so it renders correctly on a normal console (e.g. 1920x1080) rather than
+# tiling a packed surface-sized block across the top band of the panel.
 #
 # Environment-specific and NOT unit-tested — there is no writable
 # framebuffer under a desktop (X/Wayland) session, so this is exercised
 # only during real play on a Linux text console. Degrades gracefully: if
 # /dev/fb0 will not open, blits become no-ops and the game still runs the
-# simulation + input. Requires framebuf.cyr. (Adapted from cyrius-bb.)
+# simulation + input. Assumes a 32-bpp framebuffer (the common case);
+# other depths fall through best-effort. Requires framebuf.cyr.
+# (Adapted from cyrius-bb.)
+
+enum FbIoctl {
+    FBIOGET_VSCREENINFO = 0x4600;
+    FBIOGET_FSCREENINFO = 0x4602;
+    PRESENT_MAX_SCALE = 4;
+}
 
 var present_fd = 0 - 1;
-var present_buf = 0;
+var present_row = 0;     # scratch BGRX row (surface_w * MAX_SCALE * 4)
+var present_stride = 0;  # framebuffer bytes per row
+var present_scale = 1;   # integer upscale factor
+var present_ox = 0;      # centred pixel offset x
+var present_oy = 0;      # centred pixel offset y
 
-# Open /dev/fb0 and allocate the conversion buffer sized to the surface.
-# Returns the fd, or -1 if the framebuffer is unavailable.
+# Open /dev/fb0, probe geometry, compute scale + centre offsets, and clear
+# the screen. Returns the fd, or -1 if the framebuffer is unavailable.
 fn fb_present_open(f): i64 {
     present_fd = file_open("/dev/fb0", 2, 0);
     if (present_fd < 0) {
         present_fd = 0 - 1;
         return 0 - 1;
     }
-    present_buf = alloc(fb_w(f) * fb_h(f) * 4);
+    var w = fb_w(f);
+    var h = fb_h(f);
+    var vinfo = alloc(256);
+    syscall(16, present_fd, FBIOGET_VSCREENINFO, vinfo);
+    var xres = load32(vinfo + 0);
+    var yres = load32(vinfo + 4);
+    var finfo = alloc(256);
+    syscall(16, present_fd, FBIOGET_FSCREENINFO, finfo);
+    var stride = load32(finfo + 48); # fb_fix_screeninfo.line_length
+    # fall back to surface-sized exact match if the probe looked bogus
+    if (xres <= 0) { xres = w; }
+    if (yres <= 0) { yres = h; }
+    if (stride <= 0) { stride = xres * 4; }
+    var s = xres / w;
+    var sv = yres / h;
+    if (sv < s) { s = sv; }
+    if (s < 1) { s = 1; }
+    if (s > PRESENT_MAX_SCALE) { s = PRESENT_MAX_SCALE; }
+    present_scale = s;
+    present_stride = stride;
+    present_ox = (xres - w * s) / 2;
+    present_oy = (yres - h * s) / 2;
+    present_row = alloc(w * s * 4 + 16);
+    # clear the screen to black once (best-effort)
+    var blank = alloc(stride);
+    memset(blank, 0, stride);
+    syscall(8, present_fd, 0, 0);
+    var ry = 0;
+    while (ry < yres) {
+        file_write(present_fd, blank, stride);
+        ry = ry + 1;
+    }
     return present_fd;
 }
 
-# Blit the surface to the framebuffer. No-op if /dev/fb0 was not opened.
+# Blit the surface to the framebuffer, integer-scaled + centred. No-op if
+# /dev/fb0 was not opened.
 fn fb_present_blit(f): i64 {
     if (present_fd < 0) { return 0; }
-    var n = fb_w(f) * fb_h(f);
+    var w = fb_w(f);
+    var h = fb_h(f);
+    var s = present_scale;
     var src = fb_pixels(f);
-    var i = 0;
-    var si = 0;
+    var rowbytes = w * s * 4;
+    var sy = 0;
+    var sx = 0;
     var di = 0;
-    while (i < n) {
-        si = i * 3;
-        di = i * 4;
-        store8(present_buf + di, load8(src + si + 2));      # B
-        store8(present_buf + di + 1, load8(src + si + 1));  # G
-        store8(present_buf + di + 2, load8(src + si));      # R
-        store8(present_buf + di + 3, 0);                    # X
-        i = i + 1;
+    var soff = 0;
+    var rep = 0;
+    var vy = 0;
+    var fboff = 0;
+    while (sy < h) {
+        # build one scaled BGRX row from surface row sy
+        sx = 0;
+        di = 0;
+        while (sx < w) {
+            soff = (sy * w + sx) * 3;
+            rep = 0;
+            while (rep < s) {
+                store8(present_row + di, load8(src + soff + 2));     # B
+                store8(present_row + di + 1, load8(src + soff + 1)); # G
+                store8(present_row + di + 2, load8(src + soff));     # R
+                store8(present_row + di + 3, 0);                     # X
+                di = di + 4;
+                rep = rep + 1;
+            }
+            sx = sx + 1;
+        }
+        # emit it `s` times for the vertical scale
+        vy = 0;
+        while (vy < s) {
+            fboff = (present_oy + sy * s + vy) * present_stride + present_ox * 4;
+            syscall(8, present_fd, fboff, 0); # lseek SEEK_SET
+            file_write(present_fd, present_row, rowbytes);
+            vy = vy + 1;
+        }
+        sy = sy + 1;
     }
-    syscall(8, present_fd, 0, 0);                           # lseek to 0
-    file_write(present_fd, present_buf, n * 4);
     return 0;
 }
 
