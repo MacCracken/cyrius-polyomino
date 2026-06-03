@@ -1,0 +1,66 @@
+# das.cyr — delayed auto-shift for horizontal movement. See ADR 0003.
+#
+# DAS is the input-feel layer that separates "tap = one cell" from "hold =
+# the piece slides across the well": a held direction shifts once, pauses
+# for an initial DAS_DELAY, then auto-repeats every DAS_RATE frames. Pure
+# integer state machine — deterministic and unit-testable; the timing
+# constants are playtest-tunable.
+#
+# Driven once per frame with `dir` = the horizontal intent this frame
+# (-1 = left, +1 = right, 0 = none), and returns the shift to apply this
+# frame (-1 / 0 / +1). Holding the same direction charges the timer;
+# changing direction or releasing resets it.
+#
+# Raw-tty constraint: a Linux raw terminal delivers a *byte stream* with no
+# key-release events, and the kernel's own key auto-repeat has a ~250 ms
+# initial gap before it streams. So "held" is inferred from a direction
+# byte arriving on a frame, not from a true key-down/up pair: a sustained
+# hold reads as press, a brief gap (one reset), then a steady stream that
+# this machine paces at DAS_RATE. The cadence is fully ours once the stream
+# is flowing; the one-frame initial-gap reset is the documented price of
+# the tty having no release event. (Same I/O surface as cyrius-bb/doom.)
+
+enum DasConst {
+    DAS_DELAY = 16;   # frames a direction must be held before auto-repeat (~0.27 s)
+    DAS_RATE = 6;     # frames between auto-repeat shifts once charged (~10/s)
+}
+
+enum DasField {
+    DAS_LAST = 0;     # last frame's direction (-1 / 0 / +1)
+    DAS_TIMER = 8;    # frames the current direction has been held
+    DAS_SIZE = 16;
+}
+
+fn das_new(): i64 {
+    var d = alloc(DAS_SIZE);
+    store64(d + DAS_LAST, 0);
+    store64(d + DAS_TIMER, 0);
+    return d;
+}
+
+fn das_reset(d): i64 {
+    store64(d + DAS_LAST, 0);
+    store64(d + DAS_TIMER, 0);
+    return 0;
+}
+
+# Advance one frame with horizontal intent `dir` (-1/0/+1); return the
+# shift to apply this frame (-1/0/+1).
+fn das_update(d, dir): i64 {
+    if (dir == 0) {
+        das_reset(d);
+        return 0;
+    }
+    if (dir != load64(d + DAS_LAST)) {
+        # fresh press or direction change: shift once, start charging
+        store64(d + DAS_LAST, dir);
+        store64(d + DAS_TIMER, 0);
+        return dir;
+    }
+    # same direction held: charge, then auto-repeat past the initial delay
+    var t = load64(d + DAS_TIMER) + 1;
+    store64(d + DAS_TIMER, t);
+    if (t < DAS_DELAY) { return 0; }
+    if (((t - DAS_DELAY) % DAS_RATE) == 0) { return dir; }
+    return 0;
+}

@@ -57,9 +57,12 @@ fn input_init(): i64 {
     var iflag = load32(&raw);
     iflag = iflag & (0 - 1331);
     store32(&raw, iflag);
-    # c_cc[VMIN]=0 (non-blocking), c_cc[VTIME]=0
-    store8(&raw + 22, 0);
-    store8(&raw + 21, 0);
+    # c_cc[VMIN]=0 (non-blocking), c_cc[VTIME]=0. c_cc starts at byte 17
+    # (after the four 4-byte flags + the 1-byte c_line); VTIME is index 5,
+    # VMIN index 6 -> bytes 22 and 23. Getting VMIN wrong leaves read()
+    # blocking (VMIN=1), so the loop only advances on a keypress.
+    store8(&raw + 23, 0); # c_cc[VMIN]
+    store8(&raw + 22, 0); # c_cc[VTIME]
     syscall(16, 0, TCSETS, &raw);
     raw_active = 1;
     return 0;

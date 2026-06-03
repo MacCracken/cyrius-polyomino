@@ -4,10 +4,13 @@
 include "src/piece.cyr"
 include "src/board.cyr"
 include "src/score.cyr"
+include "src/gravity.cyr"
 include "src/world.cyr"
 include "src/framebuf.cyr"
 include "src/render.cyr"
+include "src/hud.cyr"
 include "src/input.cyr"
+include "src/das.cyr"
 
 # --- helpers -----------------------------------------------------------
 
@@ -370,6 +373,145 @@ fn test_input() {
     return 0;
 }
 
+# --- gravity curve -----------------------------------------------------
+
+fn test_gravity() {
+    test_group("gravity");
+    assert_eq(gravity_frames(0), 48, "level 0 = 48 frames/cell");
+    assert_eq(gravity_frames(0 - 3), 48, "negative level clamps to 48");
+    assert_eq(gravity_frames(9), 6, "level 9 = 6");
+    assert_eq(gravity_frames(10), 5, "level 10 = 5");
+    assert_eq(gravity_frames(12), 5, "level 12 = 5 (band)");
+    assert_eq(gravity_frames(13), 4, "level 13 = 4");
+    assert_eq(gravity_frames(19), 2, "level 19 = 2");
+    assert_eq(gravity_frames(28), 2, "level 28 = 2 (band)");
+    assert_eq(gravity_frames(29), 1, "level 29 = 1 (kill speed)");
+    assert_eq(gravity_frames(99), 1, "stays at 1 past 29");
+    # monotonic non-increasing across the table
+    var l = 1;
+    var ok = 1;
+    while (l < 40) {
+        if (gravity_frames(l) > gravity_frames(l - 1)) { ok = 0; }
+        l = l + 1;
+    }
+    assert_eq(ok, 1, "gravity curve never speeds back up");
+    return 0;
+}
+
+# --- world tick (gravity timing + lock delay + soft drop) --------------
+
+fn test_world_tick() {
+    test_group("world tick");
+    var b = board_new(10, 20);
+    var wd = world_new(b, 42);
+
+    # airborne at level 0: 47 ticks hold, the 48th drops one cell
+    t_force(wd, 1, 0, 3, 0);
+    var i = 0;
+    while (i < 47) { world_tick(wd, 0); i = i + 1; }
+    assert_eq(world_cur_y(wd), 0, "no drop before the gravity interval");
+    world_tick(wd, 0);
+    assert_eq(world_cur_y(wd), 1, "drops one cell at the interval");
+
+    # grounded: lock delay holds for LOCK_DELAY_FRAMES, then commits
+    var b2 = board_new(10, 20);
+    var w2 = world_new(b2, 42);
+    t_force(w2, 1, 0, 3, 18);                # O resting on the floor
+    assert_eq(world_grounded(w2), 1, "piece on the floor is grounded");
+    i = 0;
+    while (i < 29) { world_tick(w2, 0); i = i + 1; }
+    assert_eq(board_count(world_board(w2)), 0, "not locked during the grace window");
+    world_tick(w2, 0);
+    assert_eq(board_count(world_board(w2)), 4, "locks after the lock delay");
+
+    # lock-delay reset: a move while grounded restarts the timer
+    var b3 = board_new(10, 20);
+    var w3 = world_new(b3, 42);
+    t_force(w3, 1, 0, 3, 18);
+    i = 0;
+    while (i < 29) { world_tick(w3, 0); i = i + 1; }
+    assert_eq(world_move(w3, 1), 1, "slide right while grounded");
+    assert_eq(board_count(world_board(w3)), 0, "move reset the lock timer");
+    i = 0;
+    while (i < 29) { world_tick(w3, 0); i = i + 1; }
+    assert_eq(board_count(world_board(w3)), 0, "still resting after the reset");
+    world_tick(w3, 0);
+    assert_eq(board_count(world_board(w3)), 4, "locks once the reset window elapses");
+
+    # soft drop: tightens the cadence to SOFT_DROP_FRAMES and scores a point
+    var b4 = board_new(10, 20);
+    var w4 = world_new(b4, 42);
+    t_force(w4, 1, 0, 3, 0);
+    var s0 = world_score(w4);
+    world_tick(w4, 1);
+    assert_eq(world_cur_y(w4), 0, "soft: no drop on frame 1 of 2");
+    world_tick(w4, 1);
+    assert_eq(world_cur_y(w4), 1, "soft: drops on frame 2");
+    assert_eq(world_score(w4), s0 + 1, "soft drop scores one point per cell");
+    return 0;
+}
+
+# --- DAS ---------------------------------------------------------------
+
+fn test_das() {
+    test_group("das");
+    var d = das_new();
+    assert_eq(das_update(d, 1), 1, "fresh press shifts once");
+    var i = 0;
+    var any = 0;
+    while (i < 15) {
+        if (das_update(d, 1) != 0) { any = 1; }
+        i = i + 1;
+    }
+    assert_eq(any, 0, "no shift while charging the initial delay");
+    assert_eq(das_update(d, 1), 1, "auto-shift fires at DAS_DELAY");
+    assert_eq(das_update(d, 1), 0, "quiet between auto-repeats");
+
+    assert_eq(das_update(d, 0), 0, "release emits nothing");
+    assert_eq(das_update(d, 1), 1, "re-press shifts immediately (timer was reset)");
+    assert_eq(das_update(d, 0 - 1), 0 - 1, "direction change shifts immediately");
+    return 0;
+}
+
+# --- HUD ---------------------------------------------------------------
+
+fn test_hud() {
+    test_group("hud");
+    hud_init();
+    var f = fb_new(64, 32);
+    fb_clear(f, 0, 0, 0);
+    # digit 8 = glyph(7,5,7,5,7): top row all-on, row1 middle column off
+    hud_draw_digit(f, 0, 0, 8, 2, 100, 150, 200);
+    assert_eq(fb_get(f, 0, 0, 0), 100, "digit 8 top-left pixel set");
+    assert_eq(fb_get(f, 0, 0, 1), 150, "digit 8 top-left pixel G");
+    assert_eq(fb_get(f, 2, 2, 0), 0, "digit 8 row1 middle column is a gap");
+
+    # number 0 renders the '0' glyph (row0 all-on) at the origin
+    fb_clear(f, 0, 0, 0);
+    hud_draw_number(f, 0, 0, 0, 1, 200, 10, 10);
+    assert_eq(fb_get(f, 0, 0, 0), 200, "number 0 draws a digit");
+
+    # next-piece preview: force the next piece to O and check a known cell
+    var b = board_new(10, 20);
+    var wd = world_new(b, 42);
+    store64(wd + WO_NEXT, 1);                 # O — cells (1,0)(2,0)(1,1)(2,1)
+    fb_clear(f, 0, 0, 0);
+    hud_draw_preview(f, wd, 0, 0, 6);
+    assert_eq(fb_get(f, 6, 0, 0), 230, "preview O cell (1,0) in O amber");
+    assert_eq(fb_get(f, 0, 0, 0), 0, "preview cell (0,0) empty for O");
+
+    # full HUD panel render lands to the right of the well. The surface
+    # width must use explicit parens around the multiply (Cyrius mis-parses
+    # `literal * ENUM + literal` — see hud_panel_x / CLAUDE.md).
+    var surf = fb_new((10 * CELL) + 90, 20 * CELL);
+    assert_eq(fb_w(surf), 210, "panel surface is well + 90px HUD wide");
+    assert_eq(hud_panel_x(wd), 126, "HUD panel x is just right of the well");
+    fb_clear(surf, 0, 0, 0);
+    hud_render(surf, wd);
+    assert_eq(fb_get(surf, hud_panel_x(wd), 16, 0), 240, "score digit drawn in the side panel");
+    return 0;
+}
+
 fn main() {
     alloc_init();
     test_piece();
@@ -381,8 +523,12 @@ fn main() {
     test_world_gravity();
     test_world_clear();
     test_world_topout();
+    test_world_tick();
+    test_gravity();
+    test_das();
     test_score();
     test_render();
+    test_hud();
     test_input();
     return assert_summary();
 }

@@ -6,14 +6,18 @@
 # sequence produces a bit-identical result (the replay / speedrun
 # invariant; see CLAUDE.md).
 #
-# Requires (include order): piece.cyr, board.cyr, score.cyr — then this.
+# Requires (include order): piece.cyr, board.cyr, score.cyr, gravity.cyr
+# — then this.
 #
 # RNG. A 64-bit LCG (Knuth/PCG multiplier); piece pick uses the upper bits
 # masked non-negative, mod 7. Uniform is fine for M1 — the 7-bag
 # randomizer replaces it in M3 (roadmap). The state lives in the world so
 # the stream is per-game and seedable, not a process global.
 #
-# Heap struct, 11 x i64.
+# Heap struct, 15 x i64. The trailing four fields are real-time timing
+# state (gravity / lock-delay counters + the last lock's clear count) used
+# by the frame-tick model (world_tick); the deterministic mutators above
+# them are timing-free and unchanged.
 
 enum WorldState {
     WS_PLAYING = 0;
@@ -32,7 +36,11 @@ enum WorldField {
     WO_LINES = 64;
     WO_LEVEL = 72;
     WO_STATE = 80;
-    WO_SIZE = 88;
+    WO_GRAV_TIMER = 88;     # frames accumulated toward the next gravity step
+    WO_LOCK_TIMER = 96;     # frames the grounded piece has waited toward lock
+    WO_LOCK_RESETS = 104;   # move/rotate lock-delay resets used this landing
+    WO_LAST_CLEARED = 112;  # lines cleared by the most recent lock (HUD / fx)
+    WO_SIZE = 120;
 }
 
 enum Spawn {
@@ -66,6 +74,7 @@ fn world_score(wd): i64 { return load64(wd + WO_SCORE); }
 fn world_lines(wd): i64 { return load64(wd + WO_LINES); }
 fn world_level(wd): i64 { return load64(wd + WO_LEVEL); }
 fn world_state(wd): i64 { return load64(wd + WO_STATE); }
+fn world_last_cleared(wd): i64 { return load64(wd + WO_LAST_CLEARED); }
 
 # --- lifecycle ---------------------------------------------------------
 
@@ -77,6 +86,9 @@ fn world_spawn(wd): i64 {
     store64(wd + WO_CUR_ROT, 0);
     store64(wd + WO_CUR_X, SPAWN_X);
     store64(wd + WO_CUR_Y, SPAWN_Y);
+    store64(wd + WO_GRAV_TIMER, 0);     # fresh piece -> fresh fall/lock timing
+    store64(wd + WO_LOCK_TIMER, 0);
+    store64(wd + WO_LOCK_RESETS, 0);
     var b = load64(wd + WO_BOARD);
     if (board_collides(b, piece_word(load64(wd + WO_CUR_TYPE), 0), SPAWN_X, SPAWN_Y) == 1) {
         store64(wd + WO_STATE, WS_GAME_OVER);
@@ -93,12 +105,40 @@ fn world_new(b, seed): i64 {
     store64(wd + WO_LINES, 0);
     store64(wd + WO_LEVEL, 0);
     store64(wd + WO_STATE, WS_PLAYING);
+    store64(wd + WO_GRAV_TIMER, 0);
+    store64(wd + WO_LOCK_TIMER, 0);
+    store64(wd + WO_LOCK_RESETS, 0);
+    store64(wd + WO_LAST_CLEARED, 0);
     store64(wd + WO_NEXT, world_next_type(wd));   # first draw -> next slot
     world_spawn(wd);                              # next -> cur, draw a new next
     return wd;
 }
 
 # --- moves -------------------------------------------------------------
+
+# Can the active piece NOT fall one more row (resting on the stack/floor)?
+# 1 = grounded (a gravity step would lock it), 0 = airborne. Pure read.
+fn world_grounded(wd): i64 {
+    if (load64(wd + WO_STATE) != WS_PLAYING) { return 0; }
+    var b = load64(wd + WO_BOARD);
+    var word = piece_word(load64(wd + WO_CUR_TYPE), load64(wd + WO_CUR_ROT));
+    return board_collides(b, word, load64(wd + WO_CUR_X), load64(wd + WO_CUR_Y) + 1);
+}
+
+# Lock-delay reset: a successful move/rotate while grounded restarts the
+# lock timer, but only LOCK_MAX_RESETS times per landing — so sliding /
+# spinning buys a little time without stalling the piece forever (the
+# bounded-"infinity" guideline behaviour). No-op while airborne (the tick
+# zeroes the lock state then anyway).
+fn world_lock_reset(wd): i64 {
+    if (world_grounded(wd) == 1) {
+        if (load64(wd + WO_LOCK_RESETS) < LOCK_MAX_RESETS) {
+            store64(wd + WO_LOCK_TIMER, 0);
+            store64(wd + WO_LOCK_RESETS, load64(wd + WO_LOCK_RESETS) + 1);
+        }
+    }
+    return 0;
+}
 
 # Shift the active piece by dcol columns. Returns 1 if it moved, 0 if blocked.
 fn world_move(wd, dcol): i64 {
@@ -108,6 +148,7 @@ fn world_move(wd, dcol): i64 {
     var nx = load64(wd + WO_CUR_X) + dcol;
     if (board_collides(b, word, nx, load64(wd + WO_CUR_Y)) == 0) {
         store64(wd + WO_CUR_X, nx);
+        world_lock_reset(wd);
         return 1;
     }
     return 0;
@@ -122,6 +163,7 @@ fn world_rotate(wd, dir): i64 {
     var word = piece_word(load64(wd + WO_CUR_TYPE), nr);
     if (board_collides(b, word, load64(wd + WO_CUR_X), load64(wd + WO_CUR_Y)) == 0) {
         store64(wd + WO_CUR_ROT, nr);
+        world_lock_reset(wd);
         return 1;
     }
     return 0;
@@ -140,6 +182,7 @@ fn world_lock_sequence(wd): i64 {
         store64(wd + WO_SCORE, load64(wd + WO_SCORE) + score_for_lines(cleared, level));
         store64(wd + WO_LEVEL, level_for_lines(lines));
     }
+    store64(wd + WO_LAST_CLEARED, cleared);
     world_spawn(wd);
     return cleared;
 }
@@ -171,4 +214,52 @@ fn world_soft_drop(wd): i64 {
         return 0;
     }
     return world_lock_sequence(wd);
+}
+
+# --- real-time frame tick ----------------------------------------------
+
+# Advance one frame of wall-clock game time, independent of player input.
+# This is the loop's heartbeat: gravity falls on its own schedule and a
+# grounded piece commits after the lock-delay grace window — so the game
+# state evolves whether or not a key was pressed this frame (the bug that
+# 0.2.2's input fix exposed once the loop actually ran live).
+#
+# `soft` (0/1) is the soft-drop key state for this frame: while held, the
+# fall cadence tightens to SOFT_DROP_FRAMES and each dropped cell scores a
+# point (guideline soft-drop bonus). Soft drop does not bypass lock delay.
+#
+# Returns the number of lines cleared this frame (0 unless a lock landed a
+# clear). Moves/rotations are applied by the caller via world_move /
+# world_rotate before the tick; they reset the lock timer (world_lock_reset).
+# No-op (returns 0) once the game is over.
+fn world_tick(wd, soft): i64 {
+    if (load64(wd + WO_STATE) != WS_PLAYING) { return 0; }
+    store64(wd + WO_LAST_CLEARED, 0);
+    if (world_grounded(wd) == 1) {
+        # Resting on the stack/floor: gravity idles, the lock timer runs.
+        store64(wd + WO_GRAV_TIMER, 0);
+        var lt = load64(wd + WO_LOCK_TIMER) + 1;
+        store64(wd + WO_LOCK_TIMER, lt);
+        if (lt >= LOCK_DELAY_FRAMES) {
+            return world_lock_sequence(wd);   # locks, clears, scores, spawns
+        }
+        return 0;
+    }
+    # Airborne: the lock state is moot until it lands again.
+    store64(wd + WO_LOCK_TIMER, 0);
+    store64(wd + WO_LOCK_RESETS, 0);
+    var interval = gravity_frames(load64(wd + WO_LEVEL));
+    if (soft == 1) {
+        if (SOFT_DROP_FRAMES < interval) { interval = SOFT_DROP_FRAMES; }
+    }
+    var gt = load64(wd + WO_GRAV_TIMER) + 1;
+    if (gt < interval) {
+        store64(wd + WO_GRAV_TIMER, gt);
+        return 0;
+    }
+    # Gravity step: drop one row (guaranteed free — we are not grounded).
+    store64(wd + WO_GRAV_TIMER, 0);
+    store64(wd + WO_CUR_Y, load64(wd + WO_CUR_Y) + 1);
+    if (soft == 1) { store64(wd + WO_SCORE, load64(wd + WO_SCORE) + 1); }
+    return 0;
 }

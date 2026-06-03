@@ -1,0 +1,197 @@
+# hud.cyr — score / level / lines overlay + next-piece preview, via a tiny
+# 3x5 bitmap font. See ADR 0003. Drawn with fb_fill_rect (scaled blocks),
+# so it is deterministic and pixel-assertable. The bitmap-font core is the
+# proven cyrius-bb hud.cyr (digits + A-Z); the polyomino-specific layout
+# (HUD panel + NEXT preview) is added below.
+#
+# Requires (include order): piece, board, world, framebuf, render — then
+# this (uses CELL / type_rgb / rgb_* from render.cyr).
+#
+# Each glyph is 5 rows of 3 bits (bit2 = left column), packed into one i64:
+# (r0<<12)|(r1<<9)|(r2<<6)|(r3<<3)|r4.
+
+var hud_font = 0;
+var hud_letters = 0;
+
+# Pack a 3x5 glyph (five 3-bit rows, bit2 = left column) into one i64.
+fn glyph(r0, r1, r2, r3, r4): i64 {
+    return (r0 << 12) | (r1 << 9) | (r2 << 6) | (r3 << 3) | r4;
+}
+
+fn hud_init(): i64 {
+    hud_font = alloc(80);
+    store64(hud_font + 0 * 8, glyph(7, 5, 5, 5, 7));  # 0
+    store64(hud_font + 1 * 8, glyph(2, 6, 2, 2, 7));  # 1
+    store64(hud_font + 2 * 8, glyph(7, 1, 7, 4, 7));  # 2
+    store64(hud_font + 3 * 8, glyph(7, 1, 7, 1, 7));  # 3
+    store64(hud_font + 4 * 8, glyph(5, 5, 7, 1, 1));  # 4
+    store64(hud_font + 5 * 8, glyph(7, 4, 7, 1, 7));  # 5
+    store64(hud_font + 6 * 8, glyph(7, 4, 7, 5, 7));  # 6
+    store64(hud_font + 7 * 8, glyph(7, 1, 2, 2, 2));  # 7
+    store64(hud_font + 8 * 8, glyph(7, 5, 7, 5, 7));  # 8
+    store64(hud_font + 9 * 8, glyph(7, 5, 7, 1, 7));  # 9
+    # A..Z — 3x5 uppercase (for labels + the GAME OVER screen)
+    hud_letters = alloc(26 * 8);
+    store64(hud_letters + 0 * 8, glyph(2, 5, 7, 5, 5));   # A
+    store64(hud_letters + 1 * 8, glyph(6, 5, 6, 5, 6));   # B
+    store64(hud_letters + 2 * 8, glyph(3, 4, 4, 4, 3));   # C
+    store64(hud_letters + 3 * 8, glyph(6, 5, 5, 5, 6));   # D
+    store64(hud_letters + 4 * 8, glyph(7, 4, 6, 4, 7));   # E
+    store64(hud_letters + 5 * 8, glyph(7, 4, 6, 4, 4));   # F
+    store64(hud_letters + 6 * 8, glyph(3, 4, 5, 5, 3));   # G
+    store64(hud_letters + 7 * 8, glyph(5, 5, 7, 5, 5));   # H
+    store64(hud_letters + 8 * 8, glyph(7, 2, 2, 2, 7));   # I
+    store64(hud_letters + 9 * 8, glyph(1, 1, 1, 5, 2));   # J
+    store64(hud_letters + 10 * 8, glyph(5, 5, 6, 5, 5));  # K
+    store64(hud_letters + 11 * 8, glyph(4, 4, 4, 4, 7));  # L
+    store64(hud_letters + 12 * 8, glyph(5, 7, 7, 5, 5));  # M
+    store64(hud_letters + 13 * 8, glyph(7, 7, 5, 5, 5));  # N
+    store64(hud_letters + 14 * 8, glyph(7, 5, 5, 5, 7));  # O
+    store64(hud_letters + 15 * 8, glyph(6, 5, 6, 4, 4));  # P
+    store64(hud_letters + 16 * 8, glyph(7, 5, 5, 7, 1));  # Q
+    store64(hud_letters + 17 * 8, glyph(6, 5, 6, 5, 5));  # R
+    store64(hud_letters + 18 * 8, glyph(3, 4, 2, 1, 6));  # S
+    store64(hud_letters + 19 * 8, glyph(7, 2, 2, 2, 2));  # T
+    store64(hud_letters + 20 * 8, glyph(5, 5, 5, 5, 7));  # U
+    store64(hud_letters + 21 * 8, glyph(5, 5, 5, 5, 2));  # V
+    store64(hud_letters + 22 * 8, glyph(5, 5, 7, 7, 5));  # W
+    store64(hud_letters + 23 * 8, glyph(5, 5, 2, 5, 5));  # X
+    store64(hud_letters + 24 * 8, glyph(5, 5, 2, 2, 2));  # Y
+    store64(hud_letters + 25 * 8, glyph(7, 1, 2, 4, 7));  # Z
+    return 0;
+}
+
+# Draw digit d (0-9) at top-left (x, y), each font pixel a scale x scale
+# block. Out-of-range d is ignored.
+fn hud_draw_digit(f, x, y, d, scale, r, g, b): i64 {
+    if (d < 0) { return 0; }
+    if (d > 9) { return 0; }
+    var bits = load64(hud_font + d * 8);
+    var row = 0;
+    var col = 0;
+    var rb = 0;
+    while (row < 5) {
+        rb = (bits >> (12 - row * 3)) & 7;
+        col = 0;
+        while (col < 3) {
+            if ((rb & (1 << (2 - col))) != 0) {
+                fb_fill_rect(f, x + col * scale, y + row * scale, scale, scale, r, g, b);
+            }
+            col = col + 1;
+        }
+        row = row + 1;
+    }
+    return 0;
+}
+
+# Draw a non-negative integer left-to-right starting at (x, y).
+fn hud_draw_number(f, x, y, n, scale, r, g, b): i64 {
+    var v = n;
+    if (v < 0) { v = 0; }
+    var digits[20];
+    var count = 0;
+    var t = 0;
+    if (v == 0) {
+        store8(&digits, 0);
+        count = 1;
+    } else {
+        t = v;
+        while (t > 0) {
+            store8(&digits + count, t % 10);
+            t = t / 10;
+            count = count + 1;
+        }
+    }
+    var dw = scale * 4;
+    var i = 0;
+    while (i < count) {
+        hud_draw_digit(f, x + i * dw, y, load8(&digits + (count - 1 - i)), scale, r, g, b);
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Draw letter idx (0=A .. 25=Z) at top-left (x, y), scale-blocked.
+fn hud_draw_letter(f, x, y, idx, scale, r, g, b): i64 {
+    if (idx < 0) { return 0; }
+    if (idx > 25) { return 0; }
+    var bits = load64(hud_letters + idx * 8);
+    var row = 0;
+    var col = 0;
+    var rb = 0;
+    while (row < 5) {
+        rb = (bits >> (12 - row * 3)) & 7;
+        col = 0;
+        while (col < 3) {
+            if ((rb & (1 << (2 - col))) != 0) {
+                fb_fill_rect(f, x + col * scale, y + row * scale, scale, scale, r, g, b);
+            }
+            col = col + 1;
+        }
+        row = row + 1;
+    }
+    return 0;
+}
+
+# Draw an ASCII char if it is an uppercase letter (A-Z); else nothing.
+fn hud_draw_char(f, x, y, ch, scale, r, g, b): i64 {
+    if (ch >= 65) {
+        if (ch <= 90) { hud_draw_letter(f, x, y, ch - 65, scale, r, g, b); }
+    }
+    return 0;
+}
+
+# Draw a string left-to-right: A-Z + 0-9 render, space advances, others
+# are skipped. Each cell advances scale*4 px.
+fn hud_draw_text(f, x, y, s, scale, r, g, b): i64 {
+    var i = 0;
+    var ch = load8(s);
+    var cx = x;
+    var adv = scale * 4;
+    while (ch != 0) {
+        if (ch >= 48 && ch <= 57) { hud_draw_digit(f, cx, y, ch - 48, scale, r, g, b); }
+        if (ch >= 65 && ch <= 90) { hud_draw_char(f, cx, y, ch, scale, r, g, b); }
+        cx = cx + adv;
+        i = i + 1;
+        ch = load8(s + i);
+    }
+    return 0;
+}
+
+# Left edge (px) of the HUD side panel: just right of the well. Parens
+# around the multiply are load-bearing — Cyrius mis-parses `a * ENUM + b`
+# (drops the multiply); see CLAUDE.md "mixed expressions require parens".
+fn hud_panel_x(wd): i64 { return (board_w(world_board(wd)) * CELL) + 6; }
+
+# Draw the next-piece preview: the upcoming tetromino's four cells as small
+# blocks in its own type colour, top-left at (px, py), `pcell` px per cell.
+fn hud_draw_preview(f, wd, px, py, pcell): i64 {
+    var nt = world_next(wd);
+    var word = piece_word(nt, 0);
+    var col = type_rgb(nt);
+    var k = 0;
+    var cx = 0;
+    var cy = 0;
+    while (k < 4) {
+        cx = cell_x(word, k);
+        cy = cell_y(word, k);
+        fb_fill_rect(f, px + cx * pcell, py + cy * pcell, pcell - 1, pcell - 1, rgb_r(col), rgb_g(col), rgb_b(col));
+        k = k + 1;
+    }
+    return 0;
+}
+
+# Overlay the side-panel HUD: SCORE / LEVEL / LINES values + a NEXT preview.
+# hud_init() must have run once first.
+fn hud_render(f, wd): i64 {
+    var px = hud_panel_x(wd);
+    hud_draw_text(f, px, 6, "SCORE", 1, 200, 200, 210);
+    hud_draw_number(f, px, 16, world_score(wd), 1, 240, 240, 80);
+    hud_draw_text(f, px, 34, "LEVEL", 1, 200, 200, 210);
+    hud_draw_number(f, px, 44, world_level(wd), 1, 120, 220, 120);
+    hud_draw_text(f, px, 62, "LINES", 1, 200, 200, 210);
+    hud_draw_number(f, px, 72, world_lines(wd), 1, 120, 180, 240);
+    hud_draw_text(f, px, 92, "NEXT", 1, 200, 200, 210);
+    hud_draw_preview(f, wd, px, 104, 6);
+    return 0;
+}

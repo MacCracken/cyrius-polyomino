@@ -13,17 +13,21 @@
 include "src/piece.cyr"
 include "src/board.cyr"
 include "src/score.cyr"
+include "src/gravity.cyr"
 include "src/world.cyr"
 include "src/framebuf.cyr"
 include "src/render.cyr"
+include "src/hud.cyr"
 include "src/input.cyr"
+include "src/das.cyr"
 include "src/tick.cyr"
 include "src/present.cyr"
 
 enum GameConst {
     BOARD_W = 10;
     BOARD_H = 20;
-    GRAVITY_FRAMES = 30;     # frames between gravity steps (~0.5 s @ 60 fps; M2 makes this a per-level curve)
+    HUD_W = 90;              # side-panel width (px): score / level / lines + next preview
+    FLASH_FRAMES = 6;        # line-clear strobe duration (~0.1 s @ 60 fps)
     DEFAULT_SEED = 2463534242;
 }
 
@@ -37,7 +41,7 @@ fn build_world(seed): i64 {
 # top-out deterministically). Dumps one frame; prints a state signature.
 fn run_headless(frames, seed): i64 {
     var wd = build_world(seed);
-    var f = fb_new(BOARD_W * CELL, BOARD_H * CELL);
+    var f = fb_new((BOARD_W * CELL) + HUD_W, BOARD_H * CELL);
     var i = 0;
     while (i < frames) {
         world_gravity(wd);
@@ -45,6 +49,7 @@ fn run_headless(frames, seed): i64 {
         i = i + 1;
     }
     render_world(f, wd);
+    hud_render(f, wd);
     fb_write_ppm(f, "build/cyrius-polyomino-headless.ppm");
     println("cyrius-polyomino headless smoke — score lines level state cells:");
     fmt_int_fd(1, world_score(wd));
@@ -60,34 +65,99 @@ fn run_headless(frames, seed): i64 {
     return 0;
 }
 
-# Interactive: ~60 fps loop. Moves/rotates apply immediately; gravity
-# advances every GRAVITY_FRAMES frames. Renders offscreen and blits to
-# /dev/fb0 (a no-op when no framebuffer is available).
+# Line-clear cue: a brief white frame around the well. With the current
+# lock-then-clear-immediately core there is no surviving cleared row to
+# light up per-row, so M2 strobes the whole playfield border; a richer
+# per-row animation waits on splitting the lock/detect/clear steps in
+# world.cyr (roadmap M2/M3 polish). Draws over the well only, not the HUD.
+fn render_flash(f): i64 {
+    var ww = BOARD_W * CELL;
+    var wh = BOARD_H * CELL;
+    fb_fill_rect(f, 0, 0, ww, 2, 240, 240, 240);
+    fb_fill_rect(f, 0, wh - 2, ww, 2, 240, 240, 240);
+    fb_fill_rect(f, 0, 0, 2, wh, 240, 240, 240);
+    fb_fill_rect(f, ww - 2, 0, 2, wh, 240, 240, 240);
+    return 0;
+}
+
+# Explicit game-over screen: dark band across the well centre with GAME
+# OVER in red. The HUD (final score / level / lines) stays visible beside
+# it. Drawn once after the loop ends on a top-out.
+fn render_gameover(f): i64 {
+    var ww = BOARD_W * CELL;
+    var midy = (BOARD_H * CELL) / 2;
+    fb_fill_rect(f, 0, midy - 20, ww, 40, 8, 8, 12);
+    hud_draw_text(f, 8, midy - 12, "GAME", 2, 240, 80, 80);
+    hud_draw_text(f, 8, midy + 4, "OVER", 2, 240, 80, 80);
+    return 0;
+}
+
+# Console-only: block until any mapped key, so the game-over screen stays
+# up to be read. No-op-fast under no tty (input_poll returns 0 forever, so
+# the caller should only reach this on a real top-out during real play).
+fn wait_key(): i64 {
+    var a = 0;
+    while (a == 0) {
+        frame_sleep();
+        a = input_poll();
+    }
+    return 0;
+}
+
+# Interactive: ~60 fps loop. The world advances on its own clock via
+# world_tick (gravity + lock delay) every frame, independent of input —
+# moves/rotates are applied first and only nudge the piece. Horizontal
+# motion runs through DAS (tap = one cell, hold = auto-shift); soft drop
+# tightens the fall cadence via the tick's `soft` flag. Renders offscreen
+# (well + HUD panel) and blits to /dev/fb0 (a no-op with no framebuffer).
 fn run_interactive(seed): i64 {
     var wd = build_world(seed);
-    var f = fb_new(BOARD_W * CELL, BOARD_H * CELL);
+    var f = fb_new((BOARD_W * CELL) + HUD_W, BOARD_H * CELL);
+    var das = das_new();
     input_init();
     fb_present_open(f);
     var running = 1;
     var act = 0;
-    var grav = 0;
+    var dir = 0;
+    var shift = 0;
+    var soft = 0;
+    var flash = 0;
     while (running == 1) {
         frame_sleep();
         act = input_poll();
         if ((act & ACT_QUIT) != 0) { running = 0; }
-        if ((act & ACT_LEFT) != 0) { world_move(wd, 0 - 1); }
-        if ((act & ACT_RIGHT) != 0) { world_move(wd, 1); }
+
+        # horizontal intent this frame -> DAS -> at most one shift applied
+        dir = 0;
+        if ((act & ACT_LEFT) != 0) { dir = 0 - 1; }
+        if ((act & ACT_RIGHT) != 0) { dir = 1; }
+        shift = das_update(das, dir);
+        if (shift != 0) { world_move(wd, shift); }
+
         if ((act & ACT_ROT_CW) != 0) { world_rotate(wd, 1); }
         if ((act & ACT_ROT_CCW) != 0) { world_rotate(wd, 0 - 1); }
-        if ((act & ACT_SOFT) != 0) { world_soft_drop(wd); }
-        grav = grav + 1;
-        if (grav >= GRAVITY_FRAMES) {
-            grav = 0;
-            world_gravity(wd);
-        }
-        if (world_state(wd) == WS_GAME_OVER) { running = 0; }
+
+        soft = 0;
+        if ((act & ACT_SOFT) != 0) { soft = 1; }
+        if (world_tick(wd, soft) > 0) { flash = FLASH_FRAMES; }
+
         render_world(f, wd);
+        hud_render(f, wd);
+        if (flash > 0) {
+            render_flash(f);
+            flash = flash - 1;
+        }
         fb_present_blit(f);
+        if (world_state(wd) == WS_GAME_OVER) { running = 0; }
+    }
+
+    # Top-out: hold the game-over screen until a key (skipped on a quit).
+    if (world_state(wd) == WS_GAME_OVER) {
+        render_world(f, wd);
+        hud_render(f, wd);
+        render_gameover(f);
+        fb_present_blit(f);
+        wait_key();
     }
     fb_present_close();
     input_shutdown();
@@ -97,6 +167,7 @@ fn run_interactive(seed): i64 {
 fn main(): i64 {
     alloc_init();
     args_init();
+    hud_init();
     if (argc() >= 2) {
         var seed = DEFAULT_SEED;
         if (argc() >= 3) { seed = atoi(argv(2)); }

@@ -4,6 +4,74 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-06-03
+
+**M2 — progression & feel.** Turns the playable core into a game with a
+difficulty curve and modern input feel, now that the interactive loop is
+confirmed running live (0.2.2). The simulation stays a pure, deterministic
+integer core — all new timing logic lives in headless-testable modules and
+is proven by unit tests (160 assertions, up from 121). The render/feel
+items (HUD layout, next preview, game-over screen, line-clear flash) build
+and pixel-test headless but still want a console playtest for *feel*.
+
+### Added
+- **`gravity.cyr` — per-level gravity curve.** `gravity_frames(level)`
+  implements the documented classic NES-era frames-per-cell table (48
+  frames/cell at level 0 tightening to 1 at level 29+), the public
+  reference curve cited per [ADR 0001](docs/adr/0001-original-puzzle-from-observation.md).
+  Plus soft-drop cadence + lock-delay constants.
+- **Frame-tick model + lock delay (`world.cyr`).** New `world_tick(wd, soft)`
+  is the loop's heartbeat: gravity falls on its own per-level schedule and a
+  grounded piece commits only after a `LOCK_DELAY_FRAMES` grace window, with
+  bounded move/rotate lock-delay resets (`world_grounded`, `world_lock_reset`).
+  Soft drop tightens the fall cadence and scores per cell. The deterministic
+  `world_gravity` step (1 cell/frame) is retained for the headless smoke.
+- **`das.cyr` — delayed auto-shift.** Pure horizontal-movement state machine:
+  tap = one cell, hold = initial delay then auto-repeat. Documents the
+  raw-tty no-key-up constraint.
+- **`hud.cyr` — HUD + next-piece preview.** Adapts the proven cyrius-bb 3x5
+  bitmap font (digits + A-Z); side panel renders SCORE / LEVEL / LINES and a
+  NEXT-piece preview. The offscreen surface widens to well + 90px HUD panel.
+- **Game-over screen + line-clear flash** in the interactive loop: an
+  explicit GAME OVER overlay (HUD stays visible, waits for a key) and a
+  brief white well-border strobe on a clear.
+
+### Changed
+- **`main.cyr` interactive loop rewritten to the tick model.** Horizontal
+  input routes through DAS; soft drop drives `world_tick`'s `soft` flag;
+  gravity + lock delay are owned by the world, not a loop-side counter. The
+  fixed `GRAVITY_FRAMES` constant is gone (replaced by the per-level curve).
+
+### Fixed
+- **Cyrius `literal * ENUM + literal` mis-parse, defensively parenthesised.**
+  `10 * CELL + 90` compiled to `CELL + 90` (the multiply dropped), which
+  would have sized the render surface to 102px instead of 210; now written
+  `(10 * CELL) + 90` (and the same guard in `hud_panel_x`). This is the
+  concrete case behind CLAUDE.md's "mixed expressions require explicit
+  parens".
+
+## [0.2.2] - 2026-06-03
+
+Interactive-loop input fix. The raw-tty setup wrote the `c_cc[VMIN]` /
+`c_cc[VTIME]` control bytes one slot too low, so `VMIN` (byte 23) was never
+zeroed and kept its inherited canonical-mode value (1). With `VMIN=1`,
+`read()` on stdin blocked until a key arrived, freezing the whole frame
+loop — gravity and rendering only advanced on a keypress, making the
+falling piece appear locked to player input. The pure key decoder and the
+121 headless assertions never exercised the live tty path, so this only
+surfaced on a real console playtest. First confirmed working live with the
+fix in place.
+
+### Fixed
+- **`input.cyr` — `c_cc` offset off-by-one.** `input_init` now writes
+  `c_cc[VMIN]` at byte 23 and `c_cc[VTIME]` at byte 22 (the array starts at
+  byte 17, after the four 4-byte flag words + the 1-byte `c_line`; `VTIME`
+  is index 5, `VMIN` index 6). This matches the proven cyrius-bb /
+  cyrius-doom termios setup, whose comment documents this exact trap.
+  `read()` is now genuinely non-blocking (`VMIN=0`/`VTIME=0`), so the loop
+  free-runs at ~60 fps and gravity falls on its own while input is polled
+  non-destructively.
+
 ## [0.2.1] - 2026-06-01
 
 Framebuffer geometry fix. The live `/dev/fb0` present path assumed the

@@ -82,17 +82,24 @@ everything above down, score accrues, and a stack that reaches the top ends the
 game. One deterministic headless run reproduces a known board + score; the
 interactive loop is playable on a Linux console.
 
-### M2 — Progression & feel (v0.3.0)
+### M2 — Progression & feel (v0.3.0) — ✅ shipped 2026-06-03
 
 *Turn the loop into a game with depth — classic difficulty curve.*
 
-- Per-level **gravity curve** — drop interval shortens as level rises (classic frames-per-cell table; cite the source in code per [ADR 0001](../adr/0001-original-puzzle-from-observation.md))
-- **Level advance** every N lines cleared; lines + level + score carried and displayed
-- **DAS** (delayed auto-shift) + soft-drop tuning — the input feel that separates "falling blocks" from a real game
-- **Next-piece preview** (single piece; multi-preview is M3 with the 7-bag)
-- **Line-clear animation** + an explicit **game-over / top-out** state (a screen, not just loop-exit)
-- Basic **lock delay** (a short grace window before a landed piece commits)
-- HUD: score, level, lines, next piece (bitmap digit font, cyrius-bb pattern)
+Shipped (160 headless assertions; detail in [`CHANGELOG.md`](../../CHANGELOG.md) `[0.3.0]`):
+
+- ✅ Per-level **gravity curve** — `gravity.cyr`, the documented NES frames-per-cell table (48→1), cited per [ADR 0001](../adr/0001-original-puzzle-from-observation.md)
+- ✅ **Level advance** every 10 lines (carried from M1's `level_for_lines`); lines + level + score displayed in the HUD
+- ✅ **DAS** (`das.cyr`, pure state machine) + soft-drop cadence via the tick's `soft` flag
+- ✅ **Next-piece preview** (single piece) in the HUD panel
+- ✅ **Line-clear flash** + an explicit **game-over screen** (waits for a key, not just loop-exit)
+- ✅ Basic **lock delay** — `world_tick` grace window with bounded move/rotate resets
+- ✅ HUD: score, level, lines, next piece (3x5 bitmap font, cyrius-bb pattern)
+
+**Carried forward** (not blocking): M2 console playtest to tune *feel*
+(the timing constants), the soft-drop tty-autorepeat smoothness, and the
+richer per-row line-clear animation (needs the lock/detect/clear split,
+deferred to M3 polish).
 
 **Acceptance**: a player can start at level 0, watch the speed ramp with each
 level, clear lines for classic scoring, and top out to a game-over screen with
