@@ -14,6 +14,8 @@ include "src/piece.cyr"
 include "src/board.cyr"
 include "src/score.cyr"
 include "src/gravity.cyr"
+include "src/rng.cyr"
+include "src/srs.cyr"
 include "src/world.cyr"
 include "src/framebuf.cyr"
 include "src/render.cyr"
@@ -136,6 +138,12 @@ fn run_interactive(seed): i64 {
 
         if ((act & ACT_ROT_CW) != 0) { world_rotate(wd, 1); }
         if ((act & ACT_ROT_CCW) != 0) { world_rotate(wd, 0 - 1); }
+
+        if ((act & ACT_HOLD) != 0) { world_hold(wd); }
+
+        if ((act & ACT_HARD) != 0) {
+            if (world_hard_drop(wd) > 0) { flash = FLASH_FRAMES; }
+        }
 
         soft = 0;
         if ((act & ACT_SOFT) != 0) { soft = 1; }

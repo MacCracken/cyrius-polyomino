@@ -105,22 +105,29 @@ deferred to M3 polish).
 level, clear lines for classic scoring, and top out to a game-over screen with
 their final score. Speed curve traces to a documented public source.
 
-### M3 — Modern guideline layer (v0.4.0)
+### M3 — Modern guideline layer (v0.4.0) — ✅ shipped 2026-06-14
 
 *Layer the modern "feel" features on the proven classic core.*
 
-- **SRS** (Super Rotation System) — wall-kick offset tables, the modern rotation standard. Pin the guideline reference in `docs/standards/` and cite it inline ([ADR 0001](../adr/0001-original-puzzle-from-observation.md))
-- **7-bag randomizer** — replace the uniform RNG (every 7-piece window contains each tetromino once); keep it seedable
-- **Hold piece** — stash the active piece, swap once per drop
-- **Ghost piece** — landing-shadow projection at the hard-drop position
-- **Hard drop** — instant drop + lock, with the score bonus
-- **Scoring extensions** — back-to-back, combo, and (optional, playtest-gated) **T-spin** detection (3-corner rule)
-- Multi-piece next-queue preview (falls out of the 7-bag)
+Shipped (235 headless assertions; detail in [`CHANGELOG.md`](../../CHANGELOG.md) `[0.4.0]`):
 
-**Acceptance**: rotation + wall-kick behavior matches the documented guideline
-(unit-tested kick tables); hold / ghost / hard-drop / 7-bag all functional;
-back-to-back + combo scoring correct against hand-calculated expectations. The
-deterministic-replay invariant still holds with the 7-bag seeded.
+- ✅ **SRS** (Super Rotation System) — wall-kick offset tables (`srs.cyr`), the modern rotation standard; `world_rotate` tries the five kicks in order. Reference pinned in [`docs/standards/srs-rotation.md`](../standards/srs-rotation.md), cited per [ADR 0001](../adr/0001-original-puzzle-from-observation.md)
+- ✅ **7-bag randomizer** — `rng.cyr` Fisher-Yates bag feeding an upcoming-piece queue in the world; uniform RNG retired; still seedable
+- ✅ **Hold piece** — `world_hold`, one swap per drop, re-armed on lock
+- ✅ **Ghost piece** — `world_ghost_y` projection rendered dim behind the active piece
+- ✅ **Hard drop** — `world_hard_drop`, instant drop + lock + two-per-cell bonus
+- ✅ **Scoring extensions** — back-to-back, combo, and **T-spin** (3-corner rule, mini/proper) in `score.cyr` + `world_lock_sequence`
+- ✅ Multi-piece next-queue preview + HOLD slot in the HUD
+
+**Acceptance met**: rotation + wall-kick behavior matches the documented
+guideline (unit-tested kick tables, wall + floor kicks); hold / ghost /
+hard-drop / 7-bag all functional; back-to-back + combo + T-spin scoring
+correct against hand-calculated expectations. The deterministic-replay
+invariant still holds with the 7-bag seeded.
+
+**Carried forward** (not blocking): M2+M3 console playtest for *feel*; the
+richer per-row line-clear animation (needs splitting the lock/detect/clear
+steps in `world.cyr`).
 
 ### M4 — Audio pass (v0.5.0)
 

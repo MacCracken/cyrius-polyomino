@@ -3,7 +3,8 @@
 # Flat 2D grid: locked cells and the active piece are drawn as coloured
 # blocks, one CELL x CELL square per grid cell with a 1px gap so the grid
 # reads. Pure function of world state, so it is deterministic + testable
-# (assert a pixel). Ghost piece + next-queue rendering are later milestones.
+# (assert a pixel). Draws the ghost (landing-shadow) piece dim behind the
+# active piece; the next-queue preview lives in hud.cyr.
 #
 # Requires (include order): piece, board, world, framebuf — then this.
 
@@ -28,6 +29,9 @@ fn type_rgb(t): i64 {
 fn rgb_r(c): i64 { return (c >> 16) & 255; }
 fn rgb_g(c): i64 { return (c >> 8) & 255; }
 fn rgb_b(c): i64 { return c & 255; }
+
+# A dimmed shade of a packed colour (~quarter brightness) for the ghost piece.
+fn dim_rgb(c): i64 { return ((rgb_r(c) / 4) << 16) | ((rgb_g(c) / 4) << 8) | (rgb_b(c) / 4); }
 
 # Draw the block for grid cell (col, row) in packed colour c. A 1px gap on
 # the right/bottom edges separates adjacent cells.
@@ -64,6 +68,22 @@ fn render_world(f, wd): i64 {
         var col = type_rgb(t);
         var k = 0;
         var cy = 0;
+
+        # Ghost: the landing shadow at the hard-drop row, drawn dim first so
+        # the active piece overpaints it where they overlap. Skip when the
+        # piece is already resting on its landing row (ghost == active).
+        var gy = world_ghost_y(wd);
+        if (gy != oy) {
+            var dim = dim_rgb(col);
+            k = 0;
+            while (k < 4) {
+                cy = gy + cell_y(word, k);
+                if (cy >= 0) { draw_cell(f, ox + cell_x(word, k), cy, dim); }
+                k = k + 1;
+            }
+        }
+
+        k = 0;
         while (k < 4) {
             cy = oy + cell_y(word, k);
             if (cy >= 0) { draw_cell(f, ox + cell_x(word, k), cy, col); }

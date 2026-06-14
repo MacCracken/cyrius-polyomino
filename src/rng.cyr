@@ -1,0 +1,51 @@
+# rng.cyr — seedable piece randomiser. See ADR 0001, ADR 0003.
+#
+# Two layers, both pure (no globals — the state lives in the world so the
+# stream is per-game and seedable; the replay / speedrun invariant):
+#
+#   1. A 64-bit LCG (Knuth/PCG multiplier) — `rng_next_state` advances it,
+#      `rng_pick7` / `rng_bounded` derive a small index from the upper bits
+#      (masked non-negative). This is the low-level entropy source.
+#   2. The **7-bag** generator — `rng_fill_bag` writes a shuffled permutation
+#      of the seven tetromino ids (0..6) into a 7-byte buffer via Fisher-Yates,
+#      so every 7-piece window contains each piece exactly once (the modern
+#      guideline randomiser; no floods, no droughts). It advances and returns
+#      the LCG state so the caller can persist it.
+#
+# M1/M2 used the uniform `rng_pick7` directly; M3 replaces that with the bag
+# (see world.cyr's upcoming-piece queue). `rng_pick7` is retained as the
+# documented low-level helper + the determinism-test anchor.
+#
+# Self-contained — only load8/store8 builtins. Include before world.cyr.
+
+fn rng_next_state(s): i64 { return s * 6364136223846793005 + 1442695040888963407; }
+
+# 0..6 from a state word — upper bits, masked to a non-negative 31-bit int.
+fn rng_pick7(s): i64 { return ((s >> 33) & 0x7FFFFFFF) % 7; }
+
+# 0..(n-1) from a state word, same upper-bit masking. Caller passes n > 0.
+fn rng_bounded(s, n): i64 { return ((s >> 33) & 0x7FFFFFFF) % n; }
+
+# Write a shuffled permutation of 0..6 into the 7-byte buffer `dst`, using
+# Fisher-Yates seeded from LCG state `state`. Returns the advanced LCG state
+# (persist it for the next bag). Deterministic for a given state.
+fn rng_fill_bag(state, dst): i64 {
+    var i = 0;
+    while (i < 7) {
+        store8(dst + i, i);
+        i = i + 1;
+    }
+    var s = state;
+    var j = 6;
+    var k = 0;
+    var tmp = 0;
+    while (j > 0) {
+        s = rng_next_state(s);
+        k = rng_bounded(s, j + 1);     # 0..j inclusive
+        tmp = load8(dst + j);
+        store8(dst + j, load8(dst + k));
+        store8(dst + k, tmp);
+        j = j - 1;
+    }
+    return s;
+}

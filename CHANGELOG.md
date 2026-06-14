@@ -4,6 +4,55 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-06-14
+
+**M3 — modern guideline layer.** Layers the modern "feel" features on top of
+the proven classic core: SRS rotation with wall kicks, a 7-bag randomiser,
+hold, ghost, hard drop, a multi-piece NEXT queue, and the full guideline
+scoring extensions (back-to-back, combo, T-spin). The simulation stays a
+pure, deterministic integer core — every new mechanic is headless-tested
+(235 assertions, up from 160); the replay/seed invariant still holds with
+the 7-bag seeded. fmt + lint + vet clean. DCE binary 112,216 B (+12,144 vs
+0.3.0). The render items (ghost, NEXT queue, HOLD slot) build and pixel-test
+headless but still want a console playtest for *feel*.
+
+### Added
+- **`srs.cyr` — Super Rotation System wall kicks.** The documented SRS kick
+  tables (a shared J/L/S/T/Z table + a distinct I table; O never kicks),
+  stored already converted to the engine's row-down +y. `world_rotate` now
+  tries the five kick offsets in order and commits the first that fits, so
+  rotations slide off walls and floors per the guideline. Cited per
+  [ADR 0001](docs/adr/0001-original-puzzle-from-observation.md);
+  reference pinned in [`docs/standards/srs-rotation.md`](docs/standards/srs-rotation.md).
+- **`rng.cyr` — seedable 7-bag randomiser.** Split the LCG out of `world.cyr`
+  and added a Fisher-Yates bag shuffle (`rng_fill_bag`): every 7-piece window
+  contains each tetromino once. The world holds an upcoming-piece queue
+  (`world_peek` / `world_draw_next`) topped up a bag at a time, giving the
+  multi-piece preview its lookahead. Still fully seedable + deterministic.
+- **Hold piece (`world_hold`).** Stash the active piece and bring out the
+  held one (or a fresh queue piece), once per drop; a placed piece re-arms
+  hold. Bound to `c`.
+- **Ghost piece.** `world_ghost_y` projects the hard-drop landing row;
+  `render.cyr` draws the landing shadow dim behind the active piece.
+- **Hard drop (`world_hard_drop`).** Slams the piece to its landing row,
+  scores two points per cell, and locks immediately. Bound to space.
+- **Multi-piece NEXT queue + HOLD slot in the HUD.** `hud.cyr` reads the
+  upcoming queue (`HUD_PREVIEW_COUNT` pieces) and renders the held piece.
+- **Scoring extensions (`score.cyr` + `world_lock_sequence`).** T-spin-aware
+  base scoring (`score_base`: mini 100/200/400, proper 400/800/1200/1600),
+  back-to-back +50% on consecutive difficult clears (`is_difficult`), and
+  combo bonus (`combo_bonus`, 50 × combo × level). T-spin detection is the
+  documented 3-corner rule (`world_tspin_kind` + `board_solid`), mini vs
+  proper by the front-corner rule with the outermost SRS kick promoting.
+
+### Changed
+- **Controls remapped for the new actions.** Space is now hard drop (was soft
+  drop); soft drop stays on `s` / down-arrow; `c` holds. Decoder is
+  unit-tested.
+- **`world.cyr` struct grew** for the bag queue, hold slot, and
+  rotation/back-to-back/combo/T-spin tracking; the deterministic mutators
+  remain timing-free. The single `WO_NEXT` slot was replaced by the queue.
+
 ## [0.3.0] - 2026-06-03
 
 **M2 — progression & feel.** Turns the playable core into a game with a

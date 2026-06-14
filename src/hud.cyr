@@ -1,14 +1,18 @@
-# hud.cyr — score / level / lines overlay + next-piece preview, via a tiny
-# 3x5 bitmap font. See ADR 0003. Drawn with fb_fill_rect (scaled blocks),
-# so it is deterministic and pixel-assertable. The bitmap-font core is the
-# proven cyrius-bb hud.cyr (digits + A-Z); the polyomino-specific layout
-# (HUD panel + NEXT preview) is added below.
+# hud.cyr — score / level / lines overlay + NEXT queue + HOLD slot, via a
+# tiny 3x5 bitmap font. See ADR 0003. Drawn with fb_fill_rect (scaled
+# blocks), so it is deterministic and pixel-assertable. The bitmap-font core
+# is the proven cyrius-bb hud.cyr (digits + A-Z); the polyomino-specific
+# layout (HUD panel + multi-piece NEXT queue + HOLD) is added below.
 #
 # Requires (include order): piece, board, world, framebuf, render — then
 # this (uses CELL / type_rgb / rgb_* from render.cyr).
 #
 # Each glyph is 5 rows of 3 bits (bit2 = left column), packed into one i64:
 # (r0<<12)|(r1<<9)|(r2<<6)|(r3<<3)|r4.
+
+enum HudConst {
+    HUD_PREVIEW_COUNT = 3;   # upcoming pieces shown in the NEXT queue
+}
 
 var hud_font = 0;
 var hud_letters = 0;
@@ -163,26 +167,39 @@ fn hud_draw_text(f, x, y, s, scale, r, g, b): i64 {
 # (drops the multiply); see CLAUDE.md "mixed expressions require parens".
 fn hud_panel_x(wd): i64 { return (board_w(world_board(wd)) * CELL) + 6; }
 
-# Draw the next-piece preview: the upcoming tetromino's four cells as small
-# blocks in its own type colour, top-left at (px, py), `pcell` px per cell.
-fn hud_draw_preview(f, wd, px, py, pcell): i64 {
-    var nt = world_next(wd);
-    var word = piece_word(nt, 0);
-    var col = type_rgb(nt);
+# Draw piece type `t` in its spawn (rot 0) shape as small blocks in its own
+# type colour, top-left at (px, py), `pcell` px per cell.
+fn hud_draw_piece(f, t, px, py, pcell): i64 {
+    var word = piece_word(t, 0);
+    var col = type_rgb(t);
     var k = 0;
-    var cx = 0;
-    var cy = 0;
     while (k < 4) {
-        cx = cell_x(word, k);
-        cy = cell_y(word, k);
-        fb_fill_rect(f, px + cx * pcell, py + cy * pcell, pcell - 1, pcell - 1, rgb_r(col), rgb_g(col), rgb_b(col));
+        fb_fill_rect(f, px + cell_x(word, k) * pcell, py + cell_y(word, k) * pcell, pcell - 1, pcell - 1, rgb_r(col), rgb_g(col), rgb_b(col));
         k = k + 1;
     }
     return 0;
 }
 
-# Overlay the side-panel HUD: SCORE / LEVEL / LINES values + a NEXT preview.
-# hud_init() must have run once first.
+# The immediate next-piece preview (peek 0). Kept as a thin wrapper for the
+# single-piece callers; the queue drawer below stacks several.
+fn hud_draw_preview(f, wd, px, py, pcell): i64 {
+    return hud_draw_piece(f, world_next(wd), px, py, pcell);
+}
+
+# Draw the next `count` upcoming pieces stacked downward from (px, py): one
+# piece per row, spaced 3 cells + a gap apart.
+fn hud_draw_next_queue(f, wd, px, py, pcell, count): i64 {
+    var row = (pcell * 3) + 4;
+    var i = 0;
+    while (i < count) {
+        hud_draw_piece(f, world_peek(wd, i), px, py + i * row, pcell);
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Overlay the side-panel HUD: SCORE / LEVEL / LINES values, the NEXT queue,
+# and the HOLD slot. hud_init() must have run once first.
 fn hud_render(f, wd): i64 {
     var px = hud_panel_x(wd);
     hud_draw_text(f, px, 6, "SCORE", 1, 200, 200, 210);
@@ -192,6 +209,9 @@ fn hud_render(f, wd): i64 {
     hud_draw_text(f, px, 62, "LINES", 1, 200, 200, 210);
     hud_draw_number(f, px, 72, world_lines(wd), 1, 120, 180, 240);
     hud_draw_text(f, px, 92, "NEXT", 1, 200, 200, 210);
-    hud_draw_preview(f, wd, px, 104, 6);
+    hud_draw_next_queue(f, wd, px, 104, 6, HUD_PREVIEW_COUNT);
+    hud_draw_text(f, px, 178, "HOLD", 1, 200, 200, 210);
+    var ht = world_hold_type(wd);
+    if (ht != HOLD_EMPTY) { hud_draw_piece(f, ht, px, 190, 6); }
     return 0;
 }

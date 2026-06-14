@@ -5,6 +5,8 @@ include "src/piece.cyr"
 include "src/board.cyr"
 include "src/score.cyr"
 include "src/gravity.cyr"
+include "src/rng.cyr"
+include "src/srs.cyr"
 include "src/world.cyr"
 include "src/framebuf.cyr"
 include "src/render.cyr"
@@ -183,6 +185,18 @@ fn test_rng() {
     }
     assert_eq(ok, 1, "pick7 always in 0..6");
 
+    # 7-bag: a freshly filled bag is a permutation of 0..6 (each piece once)
+    var bag[7];
+    rng_fill_bag(12345, &bag);
+    var seen = 0;
+    i = 0;
+    while (i < 7) {
+        seen = seen | (1 << load8(&bag + i));
+        i = i + 1;
+    }
+    assert_eq(seen, 127, "7-bag contains each of the seven pieces once");
+    assert_eq(rng_fill_bag(999, &bag), rng_fill_bag(999, &bag), "bag fill is deterministic for a seed");
+
     # same seed -> same opening pieces
     var ba = board_new(10, 20);
     var wa = world_new(ba, 777);
@@ -190,6 +204,30 @@ fn test_rng() {
     var wb = world_new(bb, 777);
     assert_eq(world_cur_type(wa), world_cur_type(wb), "same seed -> same first piece");
     assert_eq(world_next(wa), world_next(wb), "same seed -> same next piece");
+
+    # the upcoming queue is also a 7-bag stream: across the first 14 draws
+    # (two bags), each piece appears exactly twice — no floods, no droughts.
+    var bc = board_new(10, 20);
+    var wc = world_new(bc, 55);
+    var counts[7];
+    i = 0;
+    while (i < 7) { store8(&counts + i, 0); i = i + 1; }
+    # the active piece is the first draw; count it plus the next 13 draws
+    store8(&counts + world_cur_type(wc), 1);
+    var d = 0;
+    var pt = 0;
+    while (d < 13) {
+        pt = world_draw_next(wc);
+        store8(&counts + pt, load8(&counts + pt) + 1);
+        d = d + 1;
+    }
+    var two_each = 1;
+    i = 0;
+    while (i < 7) {
+        if (load8(&counts + i) != 2) { two_each = 0; }
+        i = i + 1;
+    }
+    assert_eq(two_each, 1, "14 draws = two full bags, each piece twice");
     return 0;
 }
 
@@ -252,10 +290,80 @@ fn test_world_rotate() {
     assert_eq(world_rotate(wd, 0 - 1), 1, "rotate CCW ok");
     assert_eq(world_cur_rot(wd), 3, "CCW wraps to 3");
 
-    # rotation blocked against the floor
-    t_force(wd, 2, 0, 3, 18);                # T at the bottom
-    assert_eq(world_rotate(wd, 1), 0, "rotation into floor blocked");
-    assert_eq(world_cur_rot(wd), 0, "rotation unchanged when blocked");
+    # SRS floor kick: rotating T at the floor lifts it up instead of failing
+    t_force(wd, 2, 0, 3, 18);                # T resting at the bottom
+    assert_eq(world_rotate(wd, 1), 1, "rotation near the floor kicks up");
+    assert_eq(world_cur_rot(wd), 1, "rotated to state 1");
+    assert_eq(world_cur_x(wd), 2, "floor kick shifted x by -1");
+    assert_eq(world_cur_y(wd), 17, "floor kick lifted y by -1");
+    return 0;
+}
+
+# --- SRS wall kicks ----------------------------------------------------
+
+fn test_srs() {
+    test_group("srs");
+    # offset pack/unpack round-trips across the signed -2..2 range
+    assert_eq(srs_dx(srs_off(0, 0), 0), 0, "off(0,0) dx");
+    assert_eq(srs_dy(srs_off(0, 0), 0), 0, "off(0,0) dy");
+    assert_eq(srs_dx(srs_off(2, (0 - 2)) << 8, 1), 2, "off(2,-2) dx in byte 1");
+    assert_eq(srs_dy(srs_off(2, (0 - 2)) << 8, 1), 0 - 2, "off(2,-2) dy in byte 1");
+    assert_eq(srs_dx(srs_off((0 - 1), 1) << 16, 2), 0 - 1, "off(-1,1) dx in byte 2");
+
+    # transition ids cover the eight adjacent rotations
+    assert_eq(srs_trans(0, 1), 0, "0>1");
+    assert_eq(srs_trans(1, 0), 1, "1>0");
+    assert_eq(srs_trans(2, 3), 4, "2>3");
+    assert_eq(srs_trans(0, 3), 7, "0>3");
+
+    # test 0 is the no-kick attempt for every transition, both tables
+    var tr = 0;
+    var ok = 1;
+    while (tr < 8) {
+        if (srs_dx(srs_word_jlstz(tr), 0) != 0) { ok = 0; }
+        if (srs_dy(srs_word_jlstz(tr), 0) != 0) { ok = 0; }
+        if (srs_dx(srs_word_i(tr), 0) != 0) { ok = 0; }
+        if (srs_dy(srs_word_i(tr), 0) != 0) { ok = 0; }
+        tr = tr + 1;
+    }
+    assert_eq(ok, 1, "test 0 is (0,0) for all transitions");
+
+    # open-space rotation takes test 0 — origin unchanged
+    var b = board_new(10, 20);
+    var wd = world_new(b, 42);
+    t_force(wd, 2, 0, 4, 8);
+    assert_eq(world_rotate(wd, 1), 1, "open rotate ok");
+    assert_eq(world_cur_x(wd), 4, "no kick in open space (x)");
+    assert_eq(world_cur_y(wd), 8, "no kick in open space (y)");
+
+    # I left-wall kick: vertical I flush to the left wall, rotate CCW to
+    # horizontal. Test 0 fails (cells off the wall); I-table test 1 (dx +2)
+    # pulls it onto the board.
+    var b2 = board_new(10, 20);
+    var w2 = world_new(b2, 42);
+    t_force(w2, 0, 1, 0 - 2, 6);             # I rot1 column at board col 0
+    assert_eq(world_rotate(w2, 0 - 1), 1, "I rotates off the left wall via a kick");
+    assert_eq(world_cur_rot(w2), 0, "I rotated to horizontal");
+    assert_eq(world_cur_x(w2), 0, "left wall kick shifted x by +2");
+
+    # fully blocked: fill the board, carve out only T's current cells, so
+    # every rotation + kick collides and the rotation fails.
+    var b3 = board_new(10, 20);
+    var rr = 0;
+    var cc = 0;
+    while (rr < 20) {
+        cc = 0;
+        while (cc < 10) { board_set(b3, cc, rr, 1); cc = cc + 1; }
+        rr = rr + 1;
+    }
+    var w3 = world_new(b3, 42);
+    t_force(w3, 2, 0, 3, 4);                 # T rot0 cells (4,4)(3,5)(4,5)(5,5)
+    board_set(b3, 4, 4, 0);
+    board_set(b3, 3, 5, 0);
+    board_set(b3, 4, 5, 0);
+    board_set(b3, 5, 5, 0);
+    assert_eq(world_rotate(w3, 1), 0, "rotation fully boxed in fails");
+    assert_eq(world_cur_rot(w3), 0, "rotation unchanged when every kick blocked");
     return 0;
 }
 
@@ -311,6 +419,65 @@ fn test_world_topout() {
     return 0;
 }
 
+# --- hard drop ---------------------------------------------------------
+
+fn test_world_harddrop() {
+    test_group("world harddrop");
+    var b = board_new(10, 20);
+    var wd = world_new(b, 42);
+    t_force(wd, 1, 0, 3, 0);                  # O at the top, empty column
+    assert_eq(world_hard_drop(wd), 0, "hard drop locks, no lines cleared");
+    assert_eq(board_count(world_board(wd)), 4, "piece locked on hard drop");
+    # O fell from y=0 to y=18 (18 cells) -> 18 * 2 = 36 points
+    assert_eq(world_score(wd), 36, "hard drop scores two points per cell");
+    assert_eq(board_at(world_board(wd), 4, 19), 2, "O landed on the floor row");
+
+    # hard drop that completes a line clears it
+    var b2 = board_new(10, 20);
+    t_fill_row_except(b2, 19, 4, 5);
+    var w2 = world_new(b2, 42);
+    t_force(w2, 1, 0, 3, 0);                  # O drops into cols 4,5
+    assert_eq(world_hard_drop(w2), 1, "hard drop into a gap clears the line");
+    assert_eq(world_lines(w2), 1, "line counted");
+    return 0;
+}
+
+# --- hold --------------------------------------------------------------
+
+fn test_world_hold() {
+    test_group("world hold");
+    var b = board_new(10, 20);
+    var wd = world_new(b, 42);
+    assert_eq(world_hold_type(wd), HOLD_EMPTY, "hold starts empty");
+    assert_eq(world_hold_used(wd), 0, "hold unused at spawn");
+
+    t_force(wd, 2, 0, 3, 5);                  # active = T
+    var nextt = world_next(wd);              # the piece queued to come out
+    assert_eq(world_hold(wd), 1, "first hold stashes and draws fresh");
+    assert_eq(world_hold_type(wd), 2, "T is now held");
+    assert_eq(world_cur_type(wd), nextt, "active is the drawn queue piece");
+    assert_eq(world_hold_used(wd), 1, "hold marked used");
+
+    # a second hold this drop is refused
+    assert_eq(world_hold(wd), 0, "second hold this drop is a no-op");
+
+    # after a swap, holding again exchanges active and held
+    t_force(wd, 5, 0, 3, 5);                  # force active = J
+    store64(wd + WO_HOLD_USED, 0);            # simulate a new drop
+    assert_eq(world_hold(wd), 1, "swap with a non-empty hold");
+    assert_eq(world_cur_type(wd), 2, "held T came out");
+    assert_eq(world_hold_type(wd), 5, "J went into hold");
+
+    # locking a piece re-arms hold
+    var b2 = board_new(10, 20);
+    var w2 = world_new(b2, 42);
+    store64(w2 + WO_HOLD_USED, 1);
+    t_force(w2, 1, 0, 3, 18);                 # O on the floor
+    world_gravity(w2);                        # locks -> spawns
+    assert_eq(world_hold_used(w2), 0, "hold re-armed after a lock");
+    return 0;
+}
+
 # --- score -------------------------------------------------------------
 
 fn test_score() {
@@ -326,6 +493,108 @@ fn test_score() {
     assert_eq(level_for_lines(9), 0, "still level 0 at 9");
     assert_eq(level_for_lines(10), 1, "level 1 at 10");
     assert_eq(level_for_lines(25), 2, "level 2 at 25");
+
+    # T-spin-aware base scoring (kind 0 regular, 1 mini, 2 proper)
+    assert_eq(score_base(0, 2, 0), 300, "kind 0 falls back to the regular table");
+    assert_eq(score_base(1, 0, 0), 100, "mini T-spin, no lines");
+    assert_eq(score_base(1, 1, 0), 200, "mini T-spin single");
+    assert_eq(score_base(2, 0, 0), 400, "proper T-spin, no lines");
+    assert_eq(score_base(2, 1, 0), 800, "T-spin single");
+    assert_eq(score_base(2, 2, 0), 1200, "T-spin double");
+    assert_eq(score_base(2, 3, 1), 3200, "T-spin triple x level 2");
+
+    # difficulty (back-to-back eligibility) + combo bonus
+    assert_eq(is_difficult(0, 4), 1, "Tetris is difficult");
+    assert_eq(is_difficult(0, 2), 0, "a plain double is not");
+    assert_eq(is_difficult(2, 1), 1, "a line-clearing T-spin is difficult");
+    assert_eq(is_difficult(1, 0), 0, "a no-line spin is not a difficult clear");
+    assert_eq(combo_bonus(0, 0), 0, "first clear (combo 0) has no bonus");
+    assert_eq(combo_bonus(1, 0), 50, "combo 1 = 50");
+    assert_eq(combo_bonus(3, 1), 300, "combo 3 x level 2 = 300");
+    return 0;
+}
+
+# --- scoring extensions: combo / back-to-back / T-spin ------------------
+
+fn test_world_scoring() {
+    test_group("world scoring");
+
+    # combo: a clear while a chain is active adds the combo bonus
+    var b = board_new(10, 20);
+    t_fill_row_except(b, 19, 4, 5);
+    var wd = world_new(b, 42);
+    store64(wd + WO_SCORE, 0);
+    store64(wd + WO_COMBO, 0);                # pretend one clear already happened
+    t_force(wd, 1, 0, 3, 18);                 # O completes row 19
+    assert_eq(world_gravity(wd), 1, "single clear");
+    assert_eq(world_combo(wd), 1, "combo advanced to 1");
+    assert_eq(world_score(wd), 150, "single (100) + combo-1 bonus (50)");
+
+    # a clear-less lock breaks the combo
+    var bb = board_new(10, 20);
+    var wb = world_new(bb, 42);
+    store64(wb + WO_COMBO, 3);
+    t_force(wb, 1, 0, 3, 18);                 # O on the empty floor, no clear
+    world_gravity(wb);
+    assert_eq(world_combo(wb), 0 - 1, "clear-less lock resets combo");
+
+    # back-to-back: a Tetris arms B2B; the next Tetris gets +50%
+    var b2 = board_new(10, 20);
+    t_fill_row_full(b2, 16); board_set(b2, 0, 16, 0);
+    t_fill_row_full(b2, 17); board_set(b2, 0, 17, 0);
+    t_fill_row_full(b2, 18); board_set(b2, 0, 18, 0);
+    t_fill_row_full(b2, 19); board_set(b2, 0, 19, 0);
+    var w2 = world_new(b2, 42);
+    store64(w2 + WO_SCORE, 0);
+    store64(w2 + WO_COMBO, 0 - 1);
+    t_force(w2, 0, 1, 0 - 2, 16);             # vertical I fills col 0, rows 16..19
+    assert_eq(world_gravity(w2), 4, "Tetris clears four");
+    assert_eq(world_b2b(w2), 1, "Tetris arms back-to-back");
+    assert_eq(world_score(w2), 800, "first Tetris is 800, no B2B bonus yet");
+
+    var b3 = board_new(10, 20);
+    t_fill_row_full(b3, 16); board_set(b3, 0, 16, 0);
+    t_fill_row_full(b3, 17); board_set(b3, 0, 17, 0);
+    t_fill_row_full(b3, 18); board_set(b3, 0, 18, 0);
+    t_fill_row_full(b3, 19); board_set(b3, 0, 19, 0);
+    var w3 = world_new(b3, 42);
+    store64(w3 + WO_SCORE, 0);
+    store64(w3 + WO_B2B, 1);                  # previous clear was difficult
+    store64(w3 + WO_COMBO, 0 - 1);
+    t_force(w3, 0, 1, 0 - 2, 16);
+    assert_eq(world_gravity(w3), 4, "second Tetris clears four");
+    assert_eq(world_score(w3), 1200, "back-to-back Tetris = 800 + 400");
+
+    # T-spin double: a rotated T wedged into a 3-corner slot
+    var b4 = board_new(10, 20);
+    t_fill_row_full(b4, 18);
+    board_set(b4, 3, 18, 0); board_set(b4, 4, 18, 0); board_set(b4, 5, 18, 0);
+    t_fill_row_full(b4, 19);
+    board_set(b4, 4, 19, 0);
+    board_set(b4, 5, 17, 1);                  # overhang -> the third (back) corner
+    var w4 = world_new(b4, 42);
+    store64(w4 + WO_SCORE, 0);
+    store64(w4 + WO_COMBO, 0 - 1);
+    store64(w4 + WO_B2B, 0);
+    t_force(w4, 2, 2, 3, 17);                 # T pointing down, body in the slot
+    store64(w4 + WO_LAST_ROT, 1);             # as if it just rotated in
+    store64(w4 + WO_LAST_KICK, 1);
+    assert_eq(world_tspin_kind(w4), 2, "3-corner proper T-spin detected");
+    assert_eq(world_gravity(w4), 2, "T-spin double clears two");
+    assert_eq(world_last_tspin(w4), 2, "lock recorded as a proper T-spin");
+    assert_eq(world_score(w4), 1200, "T-spin double scores 1200 at level 0");
+
+    # a plain (non-rotated) T placed the same way is not a T-spin
+    var b5 = board_new(10, 20);
+    t_fill_row_full(b5, 18);
+    board_set(b5, 3, 18, 0); board_set(b5, 4, 18, 0); board_set(b5, 5, 18, 0);
+    t_fill_row_full(b5, 19);
+    board_set(b5, 4, 19, 0);
+    board_set(b5, 5, 17, 1);
+    var w5 = world_new(b5, 42);
+    t_force(w5, 2, 2, 3, 17);
+    store64(w5 + WO_LAST_ROT, 0);             # arrived by a shift, not a rotation
+    assert_eq(world_tspin_kind(w5), 0, "no T-spin without a preceding rotation");
     return 0;
 }
 
@@ -355,6 +624,19 @@ fn test_render() {
     render_world(surf, wd);
     assert_eq(fb_get(surf, 2, 2, 0), 40, "cell (0,0) drawn in I teal");
     assert_eq(fb_get(surf, 5, 230, 0), 12, "empty area shows background");
+
+    # ghost: the landing shadow renders dim (quarter brightness) below the
+    # active piece. Force an O near the top; its ghost lands on the floor.
+    var b2 = board_new(10, 20);
+    var w2 = world_new(b2, 42);
+    t_force(w2, 1, 0, 3, 0);                       # O at the top
+    assert_eq(world_ghost_y(w2), 18, "O ghost lands on the floor row");
+    var surf2 = fb_new(10 * CELL, 20 * CELL);
+    render_world(surf2, w2);
+    # O cell (1,0) at ghost origin (3,18) -> board (4,18) -> px (49,217),
+    # dim amber: R = 230/4 = 57. Active O is up at rows 0,1, far above.
+    assert_eq(fb_get(surf2, 4 * CELL + 1, 18 * CELL + 1, 0), 57, "ghost cell drawn dim");
+    assert_eq(fb_get(surf2, 4 * CELL + 1, 1, 0), 230, "active O still full brightness");
     return 0;
 }
 
@@ -365,9 +647,10 @@ fn test_input() {
     assert_eq(poly_key_action(97), ACT_LEFT, "a -> left");
     assert_eq(poly_key_action(100), ACT_RIGHT, "d -> right");
     assert_eq(poly_key_action(115), ACT_SOFT, "s -> soft drop");
-    assert_eq(poly_key_action(32), ACT_SOFT, "space -> soft drop");
+    assert_eq(poly_key_action(32), ACT_HARD, "space -> hard drop");
     assert_eq(poly_key_action(119), ACT_ROT_CW, "w -> rotate CW");
     assert_eq(poly_key_action(122), ACT_ROT_CCW, "z -> rotate CCW");
+    assert_eq(poly_key_action(99), ACT_HOLD, "c -> hold");
     assert_eq(poly_key_action(113), ACT_QUIT, "q -> quit");
     assert_eq(poly_key_action(120), 0, "unmapped key -> no action");
     return 0;
@@ -494,11 +777,21 @@ fn test_hud() {
     # next-piece preview: force the next piece to O and check a known cell
     var b = board_new(10, 20);
     var wd = world_new(b, 42);
-    store64(wd + WO_NEXT, 1);                 # O — cells (1,0)(2,0)(1,1)(2,1)
+    store8(load64(wd + WO_BAG), 1);           # O at the queue front — cells (1,0)(2,0)(1,1)(2,1)
     fb_clear(f, 0, 0, 0);
     hud_draw_preview(f, wd, 0, 0, 6);
     assert_eq(fb_get(f, 6, 0, 0), 230, "preview O cell (1,0) in O amber");
     assert_eq(fb_get(f, 0, 0, 0), 0, "preview cell (0,0) empty for O");
+
+    # multi-piece NEXT queue: force the first two upcoming pieces and check
+    # the second renders a row below the first. Queue front O, then I.
+    store8(load64(wd + WO_BAG), 1);           # peek 0 = O
+    store8(load64(wd + WO_BAG) + 1, 0);       # peek 1 = I
+    fb_clear(f, 0, 0, 0);
+    hud_draw_next_queue(f, wd, 0, 0, 6, 3);
+    assert_eq(fb_get(f, 6, 0, 0), 230, "queue piece 0 (O) at the top in amber");
+    # I (peek 1) sits at row offset (6*3+4)=22; its cells are on row 1 -> +6.
+    assert_eq(fb_get(f, 0, 28, 0), 40, "queue piece 1 (I) drawn a row down in teal");
 
     # full HUD panel render lands to the right of the well. The surface
     # width must use explicit parens around the multiply (Cyrius mis-parses
@@ -507,8 +800,11 @@ fn test_hud() {
     assert_eq(fb_w(surf), 210, "panel surface is well + 90px HUD wide");
     assert_eq(hud_panel_x(wd), 126, "HUD panel x is just right of the well");
     fb_clear(surf, 0, 0, 0);
+    store64(wd + WO_HOLD, 4);                 # Z in the hold slot (rose, R=220)
     hud_render(surf, wd);
     assert_eq(fb_get(surf, hud_panel_x(wd), 16, 0), 240, "score digit drawn in the side panel");
+    # Z cell (0,0) at the HOLD slot origin (panel_x, 190) renders in rose.
+    assert_eq(fb_get(surf, hud_panel_x(wd), 190, 0), 220, "held Z piece drawn in the HOLD slot");
     return 0;
 }
 
@@ -520,13 +816,17 @@ fn main() {
     test_world_new();
     test_world_move();
     test_world_rotate();
+    test_srs();
     test_world_gravity();
     test_world_clear();
     test_world_topout();
+    test_world_harddrop();
+    test_world_hold();
     test_world_tick();
     test_gravity();
     test_das();
     test_score();
+    test_world_scoring();
     test_render();
     test_hud();
     test_input();

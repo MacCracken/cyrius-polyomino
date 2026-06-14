@@ -67,6 +67,18 @@ fn board_collides(b, word, ox, oy): i64 {
     return 0;
 }
 
+# Is cell (c, r) solid — i.e. a wall, the floor, or an occupied cell?
+# Out-of-bounds left/right/below counts as solid; above the top (r < 0) is
+# open air. Used for the T-spin 3-corner test.
+fn board_solid(b, c, r): i64 {
+    if (c < 0) { return 1; }
+    if (c >= load64(b + BD_W)) { return 1; }
+    if (r >= load64(b + BD_H)) { return 1; }
+    if (r < 0) { return 0; }
+    if (board_at(b, c, r) != 0) { return 1; }
+    return 0;
+}
+
 # Stamp tetromino `t` (rotation `r`) into the grid at (ox, oy), writing
 # `t + 1` into each cell. Cells above the top are dropped (defensive).
 fn board_lock(b, t, r, ox, oy): i64 {

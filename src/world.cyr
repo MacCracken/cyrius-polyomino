@@ -6,18 +6,21 @@
 # sequence produces a bit-identical result (the replay / speedrun
 # invariant; see CLAUDE.md).
 #
-# Requires (include order): piece.cyr, board.cyr, score.cyr, gravity.cyr
-# — then this.
+# Requires (include order): piece.cyr, board.cyr, score.cyr, gravity.cyr,
+# rng.cyr — then this.
 #
-# RNG. A 64-bit LCG (Knuth/PCG multiplier); piece pick uses the upper bits
-# masked non-negative, mod 7. Uniform is fine for M1 — the 7-bag
-# randomizer replaces it in M3 (roadmap). The state lives in the world so
-# the stream is per-game and seedable, not a process global.
+# Piece randomiser. The 7-bag (rng.cyr) feeds an upcoming-piece queue held
+# in the world: WO_BAG points at a small ring-free byte buffer, WO_BAG_LEN
+# is how many upcoming pieces are valid. The queue is topped up a whole
+# shuffled bag at a time, so it always holds enough lookahead for the
+# multi-piece NEXT preview, and the stream is per-game + seedable (the
+# replay / speedrun invariant; see CLAUDE.md). The LCG state (WO_RNG) is
+# advanced only when a fresh bag is generated.
 #
-# Heap struct, 15 x i64. The trailing four fields are real-time timing
-# state (gravity / lock-delay counters + the last lock's clear count) used
-# by the frame-tick model (world_tick); the deterministic mutators above
-# them are timing-free and unchanged.
+# Heap struct, 16 x i64. The trailing four i64 are real-time timing state
+# (gravity / lock-delay counters + the last lock's clear count) used by the
+# frame-tick model (world_tick); the deterministic mutators above them are
+# timing-free and unchanged.
 
 enum WorldState {
     WS_PLAYING = 0;
@@ -30,17 +33,38 @@ enum WorldField {
     WO_CUR_ROT = 16;
     WO_CUR_X = 24;
     WO_CUR_Y = 32;
-    WO_NEXT = 40;
-    WO_RNG = 48;
-    WO_SCORE = 56;
-    WO_LINES = 64;
-    WO_LEVEL = 72;
-    WO_STATE = 80;
-    WO_GRAV_TIMER = 88;     # frames accumulated toward the next gravity step
-    WO_LOCK_TIMER = 96;     # frames the grounded piece has waited toward lock
-    WO_LOCK_RESETS = 104;   # move/rotate lock-delay resets used this landing
-    WO_LAST_CLEARED = 112;  # lines cleared by the most recent lock (HUD / fx)
-    WO_SIZE = 120;
+    WO_RNG = 40;            # LCG state (advanced one step per fresh 7-bag)
+    WO_BAG = 48;            # ptr to the upcoming-piece queue byte buffer
+    WO_BAG_LEN = 56;        # valid upcoming pieces in the queue [0, BAG_LEN)
+    WO_SCORE = 64;
+    WO_LINES = 72;
+    WO_LEVEL = 80;
+    WO_STATE = 88;
+    WO_GRAV_TIMER = 96;     # frames accumulated toward the next gravity step
+    WO_LOCK_TIMER = 104;    # frames the grounded piece has waited toward lock
+    WO_LOCK_RESETS = 112;   # move/rotate lock-delay resets used this landing
+    WO_LAST_CLEARED = 120;  # lines cleared by the most recent lock (HUD / fx)
+    WO_HOLD = 128;          # held piece type, or HOLD_EMPTY if none stashed
+    WO_HOLD_USED = 136;     # 1 once hold has been used this drop (one swap/piece)
+    WO_LAST_ROT = 144;      # 1 if the active piece's last successful action was a rotate
+    WO_LAST_KICK = 152;     # SRS kick-test index used by that rotation (0..4)
+    WO_B2B = 160;           # back-to-back chain active (last clear was difficult)
+    WO_COMBO = 168;         # consecutive line-clear chain (-1 = none, 0 = first clear)
+    WO_LAST_TSPIN = 176;    # T-spin kind of the most recent lock (0/1/2; HUD/fx)
+    WO_SIZE = 184;
+}
+
+# Upcoming-piece queue sizing. A refill appends a whole 7-bag, so the live
+# length sits in [BAG_REFILL, BAG_REFILL + 6] = [7, 13]; the buffer is sized
+# above that with headroom.
+enum BagConst {
+    BAG_CAP = 16;       # queue buffer capacity in bytes
+    BAG_REFILL = 7;     # top up with a fresh bag when fewer than this remain
+}
+
+# Sentinel for an empty hold slot (piece types are 0..6).
+enum HoldConst {
+    HOLD_EMPTY = 7;
 }
 
 enum Spawn {
@@ -48,18 +72,48 @@ enum Spawn {
     SPAWN_Y = 0;
 }
 
-# --- RNG ---------------------------------------------------------------
+# --- 7-bag upcoming-piece queue ----------------------------------------
 
-fn rng_next_state(s): i64 { return s * 6364136223846793005 + 1442695040888963407; }
+# Top up the upcoming-piece queue with a fresh shuffled bag when it has run
+# low (fewer than BAG_REFILL pieces left). Advances the LCG state once per
+# bag generated. No-op when the queue still has enough lookahead.
+fn world_bag_fill(wd): i64 {
+    if (load64(wd + WO_BAG_LEN) < BAG_REFILL) {
+        var tmp[7];
+        var s = rng_fill_bag(load64(wd + WO_RNG), &tmp);
+        store64(wd + WO_RNG, s);
+        var bag = load64(wd + WO_BAG);
+        var len = load64(wd + WO_BAG_LEN);
+        var i = 0;
+        while (i < 7) {
+            store8(bag + len + i, load8(&tmp + i));
+            i = i + 1;
+        }
+        store64(wd + WO_BAG_LEN, len + 7);
+    }
+    return 0;
+}
 
-# 0..6 from a state word — upper bits, masked to a non-negative 31-bit int.
-fn rng_pick7(s): i64 { return ((s >> 33) & 0x7FFFFFFF) % 7; }
+# The i-th upcoming piece type (0 = the next to spawn). Keeps the queue
+# topped up so the multi-piece preview always has lookahead.
+fn world_peek(wd, i): i64 {
+    world_bag_fill(wd);
+    return load8(load64(wd + WO_BAG) + i);
+}
 
-# Advance the world RNG and return the next piece type (0..6).
-fn world_next_type(wd): i64 {
-    var s = rng_next_state(load64(wd + WO_RNG));
-    store64(wd + WO_RNG, s);
-    return rng_pick7(s);
+# Pop and return the next upcoming piece type, shifting the queue down.
+fn world_draw_next(wd): i64 {
+    world_bag_fill(wd);
+    var bag = load64(wd + WO_BAG);
+    var v = load8(bag);
+    var len = load64(wd + WO_BAG_LEN);
+    var i = 1;
+    while (i < len) {
+        store8(bag + i - 1, load8(bag + i));
+        i = i + 1;
+    }
+    store64(wd + WO_BAG_LEN, len - 1);
+    return v;
 }
 
 # --- accessors ---------------------------------------------------------
@@ -69,31 +123,62 @@ fn world_cur_type(wd): i64 { return load64(wd + WO_CUR_TYPE); }
 fn world_cur_rot(wd): i64 { return load64(wd + WO_CUR_ROT); }
 fn world_cur_x(wd): i64 { return load64(wd + WO_CUR_X); }
 fn world_cur_y(wd): i64 { return load64(wd + WO_CUR_Y); }
-fn world_next(wd): i64 { return load64(wd + WO_NEXT); }
+fn world_next(wd): i64 { return world_peek(wd, 0); }
 fn world_score(wd): i64 { return load64(wd + WO_SCORE); }
 fn world_lines(wd): i64 { return load64(wd + WO_LINES); }
 fn world_level(wd): i64 { return load64(wd + WO_LEVEL); }
 fn world_state(wd): i64 { return load64(wd + WO_STATE); }
 fn world_last_cleared(wd): i64 { return load64(wd + WO_LAST_CLEARED); }
+fn world_hold_type(wd): i64 { return load64(wd + WO_HOLD); }
+fn world_hold_used(wd): i64 { return load64(wd + WO_HOLD_USED); }
+fn world_b2b(wd): i64 { return load64(wd + WO_B2B); }
+fn world_combo(wd): i64 { return load64(wd + WO_COMBO); }
+fn world_last_tspin(wd): i64 { return load64(wd + WO_LAST_TSPIN); }
 
 # --- lifecycle ---------------------------------------------------------
 
-# Spawn the next piece as the active piece and draw a fresh next. Tops out
-# (GAME_OVER) if the spawned piece immediately collides.
-fn world_spawn(wd): i64 {
-    store64(wd + WO_CUR_TYPE, load64(wd + WO_NEXT));
-    store64(wd + WO_NEXT, world_next_type(wd));
+# Make piece type `t` the active piece at the spawn position with fresh
+# fall/lock timing. Tops out (GAME_OVER) if it immediately collides. Shared
+# by the queue spawn and the hold swap.
+fn world_place(wd, t): i64 {
+    store64(wd + WO_CUR_TYPE, t);
     store64(wd + WO_CUR_ROT, 0);
     store64(wd + WO_CUR_X, SPAWN_X);
     store64(wd + WO_CUR_Y, SPAWN_Y);
     store64(wd + WO_GRAV_TIMER, 0);     # fresh piece -> fresh fall/lock timing
     store64(wd + WO_LOCK_TIMER, 0);
     store64(wd + WO_LOCK_RESETS, 0);
+    store64(wd + WO_LAST_ROT, 0);       # a spawn is not a rotation
+    store64(wd + WO_LAST_KICK, 0);
     var b = load64(wd + WO_BOARD);
-    if (board_collides(b, piece_word(load64(wd + WO_CUR_TYPE), 0), SPAWN_X, SPAWN_Y) == 1) {
+    if (board_collides(b, piece_word(t, 0), SPAWN_X, SPAWN_Y) == 1) {
         store64(wd + WO_STATE, WS_GAME_OVER);
     }
     return 0;
+}
+
+# Draw the next piece from the queue and make it the active piece. Tops out
+# (GAME_OVER) if the spawned piece immediately collides.
+fn world_spawn(wd): i64 {
+    return world_place(wd, world_draw_next(wd));
+}
+
+# Hold/swap: stash the active piece and bring out the held one (or a fresh
+# queue piece if the hold slot was empty). Allowed once per drop — a second
+# hold before the piece locks is a no-op. Returns 1 if it swapped, 0 if not.
+fn world_hold(wd): i64 {
+    if (load64(wd + WO_STATE) != WS_PLAYING) { return 0; }
+    if (load64(wd + WO_HOLD_USED) == 1) { return 0; }
+    var cur = load64(wd + WO_CUR_TYPE);
+    var held = load64(wd + WO_HOLD);
+    store64(wd + WO_HOLD, cur);
+    store64(wd + WO_HOLD_USED, 1);
+    if (held == HOLD_EMPTY) {
+        world_spawn(wd);
+    } else {
+        world_place(wd, held);
+    }
+    return 1;
 }
 
 # New game on board `b`, RNG seeded with `seed` (pass a non-zero seed).
@@ -101,6 +186,8 @@ fn world_new(b, seed): i64 {
     var wd = alloc(WO_SIZE);
     store64(wd + WO_BOARD, b);
     store64(wd + WO_RNG, seed);
+    store64(wd + WO_BAG, alloc(BAG_CAP));
+    store64(wd + WO_BAG_LEN, 0);
     store64(wd + WO_SCORE, 0);
     store64(wd + WO_LINES, 0);
     store64(wd + WO_LEVEL, 0);
@@ -109,8 +196,14 @@ fn world_new(b, seed): i64 {
     store64(wd + WO_LOCK_TIMER, 0);
     store64(wd + WO_LOCK_RESETS, 0);
     store64(wd + WO_LAST_CLEARED, 0);
-    store64(wd + WO_NEXT, world_next_type(wd));   # first draw -> next slot
-    world_spawn(wd);                              # next -> cur, draw a new next
+    store64(wd + WO_HOLD, HOLD_EMPTY);
+    store64(wd + WO_HOLD_USED, 0);
+    store64(wd + WO_LAST_ROT, 0);
+    store64(wd + WO_LAST_KICK, 0);
+    store64(wd + WO_B2B, 0);
+    store64(wd + WO_COMBO, 0 - 1);                # no combo chain yet
+    store64(wd + WO_LAST_TSPIN, 0);
+    world_spawn(wd);                              # draw the first piece
     return wd;
 }
 
@@ -123,6 +216,20 @@ fn world_grounded(wd): i64 {
     var b = load64(wd + WO_BOARD);
     var word = piece_word(load64(wd + WO_CUR_TYPE), load64(wd + WO_CUR_ROT));
     return board_collides(b, word, load64(wd + WO_CUR_X), load64(wd + WO_CUR_Y) + 1);
+}
+
+# Landing row of the active piece: the origin y it would settle at on a
+# straight drop from where it is now (the ghost-piece / hard-drop target).
+# Pure read — does not mutate the world.
+fn world_ghost_y(wd): i64 {
+    var b = load64(wd + WO_BOARD);
+    var word = piece_word(load64(wd + WO_CUR_TYPE), load64(wd + WO_CUR_ROT));
+    var x = load64(wd + WO_CUR_X);
+    var y = load64(wd + WO_CUR_Y);
+    while (board_collides(b, word, x, y + 1) == 0) {
+        y = y + 1;
+    }
+    return y;
 }
 
 # Lock-delay reset: a successful move/rotate while grounded restarts the
@@ -148,41 +255,106 @@ fn world_move(wd, dcol): i64 {
     var nx = load64(wd + WO_CUR_X) + dcol;
     if (board_collides(b, word, nx, load64(wd + WO_CUR_Y)) == 0) {
         store64(wd + WO_CUR_X, nx);
+        store64(wd + WO_LAST_ROT, 0);     # a shift clears the T-spin precondition
         world_lock_reset(wd);
         return 1;
     }
     return 0;
 }
 
-# Rotate by dir (+1 CW, -1 CCW). Naive — no wall kicks (SRS kicks are M3).
-# Returns 1 if it rotated, 0 if blocked.
+# Rotate by dir (+1 CW, -1 CCW) using SRS wall kicks: try the rotated piece
+# at each of the five kick offsets in order; the first that fits commits the
+# rotation (and the offset). Returns 1 if it rotated, 0 if every kick was
+# blocked.
 fn world_rotate(wd, dir): i64 {
     if (load64(wd + WO_STATE) != WS_PLAYING) { return 0; }
     var b = load64(wd + WO_BOARD);
-    var nr = (load64(wd + WO_CUR_ROT) + dir + 4) % 4;
-    var word = piece_word(load64(wd + WO_CUR_TYPE), nr);
-    if (board_collides(b, word, load64(wd + WO_CUR_X), load64(wd + WO_CUR_Y)) == 0) {
-        store64(wd + WO_CUR_ROT, nr);
-        world_lock_reset(wd);
-        return 1;
+    var t = load64(wd + WO_CUR_TYPE);
+    var from = load64(wd + WO_CUR_ROT);
+    var nr = (from + dir + 4) % 4;
+    var word = piece_word(t, nr);
+    var ox = load64(wd + WO_CUR_X);
+    var oy = load64(wd + WO_CUR_Y);
+    var kicks = srs_kicks(t, from, nr);
+    var i = 0;
+    var n = srs_test_count();
+    while (i < n) {
+        var kx = ox + srs_dx(kicks, i);
+        var ky = oy + srs_dy(kicks, i);
+        if (board_collides(b, word, kx, ky) == 0) {
+            store64(wd + WO_CUR_ROT, nr);
+            store64(wd + WO_CUR_X, kx);
+            store64(wd + WO_CUR_Y, ky);
+            store64(wd + WO_LAST_ROT, 1);     # rotation is the T-spin precondition
+            store64(wd + WO_LAST_KICK, i);    # which kick test fitted (T-spin mini/proper)
+            world_lock_reset(wd);
+            return 1;
+        }
+        i = i + 1;
     }
     return 0;
 }
 
-# Lock the active piece, clear any full lines, score them, advance the
-# level, and spawn the next piece. Returns the number of lines cleared.
+# T-spin kind for the active piece as it is about to lock: 0 = none,
+# 1 = mini, 2 = proper. Preconditions: the piece is a T and its last
+# successful action was a rotation. The 3-corner rule then requires at least
+# three of the T's 3x3-box corners to be solid. Mini vs proper is the
+# front-corner rule (both corners on the side the T points toward must be
+# solid for a proper spin), with the outermost SRS kick (test 4) promoting a
+# mini to proper. Pure read — call before board_lock.
+fn world_tspin_kind(wd): i64 {
+    if (load64(wd + WO_CUR_TYPE) != 2) { return 0; }      # only the T-piece spins
+    if (load64(wd + WO_LAST_ROT) != 1) { return 0; }      # must have just rotated
+    var b = load64(wd + WO_BOARD);
+    var ox = load64(wd + WO_CUR_X);
+    var oy = load64(wd + WO_CUR_Y);
+    var tl = board_solid(b, ox, oy);
+    var tr = board_solid(b, ox + 2, oy);
+    var bl = board_solid(b, ox, oy + 2);
+    var br = board_solid(b, ox + 2, oy + 2);
+    if (tl + tr + bl + br < 3) { return 0; }
+    var rot = load64(wd + WO_CUR_ROT);
+    var front = 0;
+    if (rot == 0) { front = tl + tr; }                    # T points up
+    if (rot == 1) { front = tr + br; }                    # points right
+    if (rot == 2) { front = bl + br; }                    # points down
+    if (rot == 3) { front = tl + bl; }                    # points left
+    if (front == 2) { return 2; }                         # both front corners -> proper
+    if (load64(wd + WO_LAST_KICK) == 4) { return 2; }     # the big kick promotes to proper
+    return 1;
+}
+
+# Lock the active piece, clear any full lines, apply the full guideline
+# scoring (T-spin base, back-to-back, combo), advance the level, and spawn
+# the next piece. Returns the number of lines cleared.
 fn world_lock_sequence(wd): i64 {
     var b = load64(wd + WO_BOARD);
+    var kind = world_tspin_kind(wd);
     board_lock(b, load64(wd + WO_CUR_TYPE), load64(wd + WO_CUR_ROT), load64(wd + WO_CUR_X), load64(wd + WO_CUR_Y));
     var cleared = board_clear_lines(b);
+    var level = load64(wd + WO_LEVEL);
+
+    var gained = score_base(kind, cleared, level);
     if (cleared > 0) {
+        if (is_difficult(kind, cleared) == 1) {
+            if (load64(wd + WO_B2B) == 1) { gained = gained + (gained / 2); }
+            store64(wd + WO_B2B, 1);
+        } else {
+            store64(wd + WO_B2B, 0);
+        }
+        var combo = load64(wd + WO_COMBO) + 1;
+        store64(wd + WO_COMBO, combo);
+        gained = gained + combo_bonus(combo, level);
         var lines = load64(wd + WO_LINES) + cleared;
         store64(wd + WO_LINES, lines);
-        var level = load64(wd + WO_LEVEL);
-        store64(wd + WO_SCORE, load64(wd + WO_SCORE) + score_for_lines(cleared, level));
         store64(wd + WO_LEVEL, level_for_lines(lines));
+    } else {
+        store64(wd + WO_COMBO, 0 - 1);     # a clear-less lock breaks the combo
     }
+    store64(wd + WO_SCORE, load64(wd + WO_SCORE) + gained);
     store64(wd + WO_LAST_CLEARED, cleared);
+    store64(wd + WO_LAST_TSPIN, kind);
+    store64(wd + WO_HOLD_USED, 0);     # a placed piece re-arms hold
     world_spawn(wd);
     return cleared;
 }
@@ -196,6 +368,7 @@ fn world_gravity(wd): i64 {
     var ny = load64(wd + WO_CUR_Y) + 1;
     if (board_collides(b, word, load64(wd + WO_CUR_X), ny) == 0) {
         store64(wd + WO_CUR_Y, ny);
+        store64(wd + WO_LAST_ROT, 0);     # falling clears the T-spin precondition
         return 0;
     }
     return world_lock_sequence(wd);
@@ -211,8 +384,29 @@ fn world_soft_drop(wd): i64 {
     if (board_collides(b, word, load64(wd + WO_CUR_X), ny) == 0) {
         store64(wd + WO_CUR_Y, ny);
         store64(wd + WO_SCORE, load64(wd + WO_SCORE) + 1);
+        store64(wd + WO_LAST_ROT, 0);     # falling clears the T-spin precondition
         return 0;
     }
+    return world_lock_sequence(wd);
+}
+
+# Hard drop: slam the piece straight down to its landing row, score two
+# points per cell fallen (guideline hard-drop bonus), and lock it
+# immediately — no lock-delay grace. Returns lines cleared on the lock.
+fn world_hard_drop(wd): i64 {
+    if (load64(wd + WO_STATE) != WS_PLAYING) { return 0; }
+    var b = load64(wd + WO_BOARD);
+    var word = piece_word(load64(wd + WO_CUR_TYPE), load64(wd + WO_CUR_ROT));
+    var x = load64(wd + WO_CUR_X);
+    var y = load64(wd + WO_CUR_Y);
+    var dropped = 0;
+    while (board_collides(b, word, x, y + 1) == 0) {
+        y = y + 1;
+        dropped = dropped + 1;
+    }
+    store64(wd + WO_CUR_Y, y);
+    store64(wd + WO_SCORE, load64(wd + WO_SCORE) + dropped * 2);
+    if (dropped > 0) { store64(wd + WO_LAST_ROT, 0); }     # a real fall ends a spin
     return world_lock_sequence(wd);
 }
 
@@ -260,6 +454,7 @@ fn world_tick(wd, soft): i64 {
     # Gravity step: drop one row (guaranteed free — we are not grounded).
     store64(wd + WO_GRAV_TIMER, 0);
     store64(wd + WO_CUR_Y, load64(wd + WO_CUR_Y) + 1);
+    store64(wd + WO_LAST_ROT, 0);     # falling clears the T-spin precondition
     if (soft == 1) { store64(wd + WO_SCORE, load64(wd + WO_SCORE) + 1); }
     return 0;
 }

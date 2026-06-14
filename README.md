@@ -61,10 +61,16 @@ cyrius test                                          # run [build].test + tests/
 
 ## Status
 
-**0.1.0 — scaffold.** Identity, ADRs, and the milestone roadmap are in place;
-the playable core (M1) is next. See [`docs/development/roadmap.md`](docs/development/roadmap.md)
-for the milestone arc and [`docs/development/state.md`](docs/development/state.md)
+**0.4.0 — M3 modern guideline layer.** The classic core (M1–M2) plus the
+modern layer: SRS rotation + wall kicks, a seedable 7-bag, hold, ghost, hard
+drop, a multi-piece NEXT queue, and full guideline scoring (T-spin,
+back-to-back, combo). Deterministic integer core, 235 headless assertions.
+See [`docs/development/roadmap.md`](docs/development/roadmap.md) for the
+milestone arc and [`docs/development/state.md`](docs/development/state.md)
 for live progress.
+
+**Controls:** `a`/`d` or ←/→ move · `s` or ↓ soft drop · space hard drop ·
+`w`/↑ rotate CW · `z` rotate CCW · `c` hold · `q`/Esc quit.
 
 ## License
 

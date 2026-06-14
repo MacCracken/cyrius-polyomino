@@ -4,10 +4,19 @@
 # Tetris (four lines) 800, each multiplied by (level + 1). Level rises one
 # step per ten lines cleared. Pure integer math, deterministic.
 #
-# Source: the falling-block guideline scoring table (Single/Double/Triple/
-# Tetris = 100/300/500/800 x level). Soft-drop awards one point per cell
-# (applied in world.cyr). Combo / back-to-back / T-spin bonuses are the M3
-# guideline layer (see roadmap).
+# M3 layers the modern guideline bonuses on top, all here as pure helpers
+# (the world wires them in world_lock_sequence):
+#   - T-spin scoring (score_base): a T locked via rotation with three of its
+#     box corners filled scores far higher. kind 2 = proper T-spin
+#     (400/800/1200/1600 for 0/1/2/3 lines), kind 1 = mini (100/200/400).
+#   - back-to-back (is_difficult): consecutive "difficult" clears — a Tetris
+#     or any line-clearing T-spin — earn +50% of the base (applied by the
+#     world when the previous clear was also difficult).
+#   - combo (combo_bonus): each consecutive line-clearing lock adds
+#     50 x combo x (level + 1); a clear-less lock breaks the chain.
+#
+# Source: the documented falling-block guideline scoring tables. Soft drop
+# awards one point per cell, hard drop two (applied in world.cyr).
 
 fn score_for_lines(n, level): i64 {
     var base = 0;
@@ -16,6 +25,40 @@ fn score_for_lines(n, level): i64 {
     if (n == 3) { base = 500; }
     if (n == 4) { base = 800; }
     return base * (level + 1);
+}
+
+# T-spin-aware base score for clearing `n` lines at `level`. kind: 0 = no
+# T-spin (regular table), 1 = mini T-spin, 2 = proper T-spin. A T-spin with
+# no lines cleared (n == 0) still scores (the spin bonus).
+fn score_base(kind, n, level): i64 {
+    if (kind == 2) {
+        if (n == 0) { return 400 * (level + 1); }
+        if (n == 1) { return 800 * (level + 1); }
+        if (n == 2) { return 1200 * (level + 1); }
+        return 1600 * (level + 1);
+    }
+    if (kind == 1) {
+        if (n == 0) { return 100 * (level + 1); }
+        if (n == 1) { return 200 * (level + 1); }
+        return 400 * (level + 1);
+    }
+    return score_for_lines(n, level);
+}
+
+# A "difficult" clear (counts toward back-to-back): a Tetris, or any T-spin
+# that clears at least one line.
+fn is_difficult(kind, n): i64 {
+    if (n == 0) { return 0; }
+    if (n == 4) { return 1; }
+    if (kind > 0) { return 1; }
+    return 0;
+}
+
+# Combo bonus for a chain of `combo` consecutive line-clearing locks (the
+# first clear is combo 0 -> no bonus). 50 x combo x (level + 1).
+fn combo_bonus(combo, level): i64 {
+    if (combo <= 0) { return 0; }
+    return 50 * combo * (level + 1);
 }
 
 fn level_for_lines(lines): i64 { return lines / 10; }
