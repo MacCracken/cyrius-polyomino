@@ -23,9 +23,15 @@
 # Signed offset (dx, dy in -2..2) -> one packed byte.
 fn srs_off(dx, dy): i64 { return ((dx + 2) << 4) | (dy + 2); }
 
-# Pack five test bytes into one transition word.
-fn srs_word(b0, b1, b2, b3, b4): i64 {
-    return b0 | (b1 << 8) | (b2 << 16) | (b3 << 24) | (b4 << 32);
+# Pack five (dx, dy) offset pairs into one transition word: pair t occupies
+# byte t. Keeps the per-transition table rows short and literal.
+fn srs_w5(x0, y0, x1, y1, x2, y2, x3, y3, x4, y4): i64 {
+    var w = srs_off(x0, y0);
+    w = w | (srs_off(x1, y1) << 8);
+    w = w | (srs_off(x2, y2) << 16);
+    w = w | (srs_off(x3, y3) << 24);
+    w = w | (srs_off(x4, y4) << 32);
+    return w;
 }
 
 # Extract test t's dx / dy (board space) from a transition word.
@@ -53,28 +59,29 @@ fn srs_trans(from, to): i64 {
     return 6;                          # from == 3, to == 0
 }
 
-# JLSTZ kick word for transition `tr` (board-space, row-down +y).
+# JLSTZ kick word for transition `tr` (board-space, row-down +y). Each row
+# is the five (dx, dy) tests; test 0 is always (0, 0).
 fn srs_word_jlstz(tr): i64 {
-    if (tr == 0) { return srs_word(srs_off(0, 0), srs_off((0 - 1), 0), srs_off((0 - 1), (0 - 1)), srs_off(0, 2), srs_off((0 - 1), 2)); }
-    if (tr == 1) { return srs_word(srs_off(0, 0), srs_off(1, 0), srs_off(1, 1), srs_off(0, (0 - 2)), srs_off(1, (0 - 2))); }
-    if (tr == 2) { return srs_word(srs_off(0, 0), srs_off(1, 0), srs_off(1, 1), srs_off(0, (0 - 2)), srs_off(1, (0 - 2))); }
-    if (tr == 3) { return srs_word(srs_off(0, 0), srs_off((0 - 1), 0), srs_off((0 - 1), (0 - 1)), srs_off(0, 2), srs_off((0 - 1), 2)); }
-    if (tr == 4) { return srs_word(srs_off(0, 0), srs_off(1, 0), srs_off(1, (0 - 1)), srs_off(0, 2), srs_off(1, 2)); }
-    if (tr == 5) { return srs_word(srs_off(0, 0), srs_off((0 - 1), 0), srs_off((0 - 1), 1), srs_off(0, (0 - 2)), srs_off((0 - 1), (0 - 2))); }
-    if (tr == 6) { return srs_word(srs_off(0, 0), srs_off((0 - 1), 0), srs_off((0 - 1), 1), srs_off(0, (0 - 2)), srs_off((0 - 1), (0 - 2))); }
-    return srs_word(srs_off(0, 0), srs_off(1, 0), srs_off(1, (0 - 1)), srs_off(0, 2), srs_off(1, 2));   # tr == 7
+    if (tr == 0) { return srs_w5(0, 0, 0 - 1, 0, 0 - 1, 0 - 1, 0, 2, 0 - 1, 2); }
+    if (tr == 1) { return srs_w5(0, 0, 1, 0, 1, 1, 0, 0 - 2, 1, 0 - 2); }
+    if (tr == 2) { return srs_w5(0, 0, 1, 0, 1, 1, 0, 0 - 2, 1, 0 - 2); }
+    if (tr == 3) { return srs_w5(0, 0, 0 - 1, 0, 0 - 1, 0 - 1, 0, 2, 0 - 1, 2); }
+    if (tr == 4) { return srs_w5(0, 0, 1, 0, 1, 0 - 1, 0, 2, 1, 2); }
+    if (tr == 5) { return srs_w5(0, 0, 0 - 1, 0, 0 - 1, 1, 0, 0 - 2, 0 - 1, 0 - 2); }
+    if (tr == 6) { return srs_w5(0, 0, 0 - 1, 0, 0 - 1, 1, 0, 0 - 2, 0 - 1, 0 - 2); }
+    return srs_w5(0, 0, 1, 0, 1, 0 - 1, 0, 2, 1, 2);   # tr == 7
 }
 
 # I kick word for transition `tr` (board-space, row-down +y).
 fn srs_word_i(tr): i64 {
-    if (tr == 0) { return srs_word(srs_off(0, 0), srs_off((0 - 2), 0), srs_off(1, 0), srs_off((0 - 2), 1), srs_off(1, (0 - 2))); }
-    if (tr == 1) { return srs_word(srs_off(0, 0), srs_off(2, 0), srs_off((0 - 1), 0), srs_off(2, (0 - 1)), srs_off((0 - 1), 2)); }
-    if (tr == 2) { return srs_word(srs_off(0, 0), srs_off((0 - 1), 0), srs_off(2, 0), srs_off((0 - 1), (0 - 2)), srs_off(2, 1)); }
-    if (tr == 3) { return srs_word(srs_off(0, 0), srs_off(1, 0), srs_off((0 - 2), 0), srs_off(1, 2), srs_off((0 - 2), (0 - 1))); }
-    if (tr == 4) { return srs_word(srs_off(0, 0), srs_off(2, 0), srs_off((0 - 1), 0), srs_off(2, (0 - 1)), srs_off((0 - 1), 2)); }
-    if (tr == 5) { return srs_word(srs_off(0, 0), srs_off((0 - 2), 0), srs_off(1, 0), srs_off((0 - 2), 1), srs_off(1, (0 - 2))); }
-    if (tr == 6) { return srs_word(srs_off(0, 0), srs_off(1, 0), srs_off((0 - 2), 0), srs_off(1, 2), srs_off((0 - 2), (0 - 1))); }
-    return srs_word(srs_off(0, 0), srs_off((0 - 1), 0), srs_off(2, 0), srs_off((0 - 1), (0 - 2)), srs_off(2, 1));   # tr == 7
+    if (tr == 0) { return srs_w5(0, 0, 0 - 2, 0, 1, 0, 0 - 2, 1, 1, 0 - 2); }
+    if (tr == 1) { return srs_w5(0, 0, 2, 0, 0 - 1, 0, 2, 0 - 1, 0 - 1, 2); }
+    if (tr == 2) { return srs_w5(0, 0, 0 - 1, 0, 2, 0, 0 - 1, 0 - 2, 2, 1); }
+    if (tr == 3) { return srs_w5(0, 0, 1, 0, 0 - 2, 0, 1, 2, 0 - 2, 0 - 1); }
+    if (tr == 4) { return srs_w5(0, 0, 2, 0, 0 - 1, 0, 2, 0 - 1, 0 - 1, 2); }
+    if (tr == 5) { return srs_w5(0, 0, 0 - 2, 0, 1, 0, 0 - 2, 1, 1, 0 - 2); }
+    if (tr == 6) { return srs_w5(0, 0, 1, 0, 0 - 2, 0, 1, 2, 0 - 2, 0 - 1); }
+    return srs_w5(0, 0, 0 - 1, 0, 2, 0, 0 - 1, 0 - 2, 2, 1);   # tr == 7
 }
 
 # The kick word for piece type `t` rotating `from`->`to`. O (type 1) shares

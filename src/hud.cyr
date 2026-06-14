@@ -173,8 +173,12 @@ fn hud_draw_piece(f, t, px, py, pcell): i64 {
     var word = piece_word(t, 0);
     var col = type_rgb(t);
     var k = 0;
+    var bx = 0;
+    var by = 0;
     while (k < 4) {
-        fb_fill_rect(f, px + cell_x(word, k) * pcell, py + cell_y(word, k) * pcell, pcell - 1, pcell - 1, rgb_r(col), rgb_g(col), rgb_b(col));
+        bx = px + cell_x(word, k) * pcell;
+        by = py + cell_y(word, k) * pcell;
+        fb_fill_rect(f, bx, by, pcell - 1, pcell - 1, rgb_r(col), rgb_g(col), rgb_b(col));
         k = k + 1;
     }
     return 0;
