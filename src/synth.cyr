@@ -1,0 +1,55 @@
+# synth.cyr — square-wave tone synthesis. See ADR 0002 (original assets), 0003.
+#
+# Pure integer PCM generation: renders era-spirit square-wave "blips" into a
+# byte buffer. No sampled audio (ADR 0002), no floating point, no device I/O
+# — so it is deterministic and fully headless-testable (assert a sample). The
+# device routing lives in audio.cyr (vani), the way present.cyr fronts the
+# framebuffer.
+#
+# Format: 8-bit unsigned mono PCM at SYNTH_RATE. Silence is the mid-level
+# 128; a sample swings +/-amplitude around it. A note is one square wave at a
+# given frequency with a linear amplitude decay across its length, so it
+# fades rather than clicking off — the classic chiptone envelope.
+#
+# Self-contained — only load8/store8 + arithmetic. Include before audio.cyr.
+
+enum SynthConst {
+    SYNTH_RATE = 11025;     # samples per second (lo-fi, era-spirit)
+    SYNTH_SILENCE = 128;    # 8-bit unsigned zero level (mid-scale)
+    SYNTH_AMP = 40;         # default square-wave amplitude (0..127)
+}
+
+# Samples needed for `ms` milliseconds at SYNTH_RATE.
+fn synth_samples_for_ms(ms): i64 { return (SYNTH_RATE * ms) / 1000; }
+
+# Render `n` samples of a square wave at `freq` Hz, amplitude `amp`, into
+# `buf` starting at byte offset `off`. Returns the next write cursor
+# (off + n). freq <= 0 renders a rest (silence). The amplitude decays
+# linearly from `amp` to ~0 across the n samples (fade-out, no click).
+fn synth_square(buf, off, n, freq, amp): i64 {
+    var i = 0;
+    if (freq <= 0) {
+        while (i < n) {
+            store8(buf + off + i, SYNTH_SILENCE);
+            i = i + 1;
+        }
+        return off + n;
+    }
+    var period = SYNTH_RATE / freq;     # samples per full cycle
+    if (period < 2) { period = 2; }
+    var half = period / 2;
+    var phase = 0;
+    var a = 0;
+    while (i < n) {
+        a = (amp * (n - i)) / n;        # linear decay envelope
+        if (phase < half) {
+            store8(buf + off + i, SYNTH_SILENCE + a);
+        } else {
+            store8(buf + off + i, SYNTH_SILENCE - a);
+        }
+        phase = phase + 1;
+        if (phase >= period) { phase = 0; }
+        i = i + 1;
+    }
+    return off + n;
+}

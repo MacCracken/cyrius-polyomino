@@ -1,0 +1,116 @@
+# audio.cyr — sound effects: event synthesis + vani playback. See ADR 0002/0003.
+#
+# Two halves, mirroring present.cyr's testable-core / device-shell split:
+#
+#   1. `sfx_render` (pure) maps a game event to a short sequence of
+#      square-wave notes (synth.cyr) in a buffer and returns the byte count.
+#      Deterministic + headless-testable.
+#   2. The device shell (`audio_init` / `audio_play` / `audio_shutdown`)
+#      routes that buffer to the ALSA playback device via vani's `audio_*`
+#      PCM API. Best-effort: with no sound card (CI / no /dev/snd) the open
+#      fails, `audio_dev` stays 0, and `audio_play` is a silent no-op — the
+#      game runs unchanged. A mute toggle short-circuits playback too.
+#
+# Requires (include order): synth.cyr — then this. vani's `audio_*` symbols
+# are provided by the [deps.vani] core module (auto-prepended).
+#
+# Original synthesis only (ADR 0002) — era-spirit blips, no sampled audio and
+# no canonical theme tune. Optional user music (M4 stretch) is not loaded yet.
+
+enum SfxEvent {
+    SFX_MOVE = 0;       # horizontal shift — short high tick
+    SFX_ROTATE = 1;     # rotation — slightly lower tick
+    SFX_LOCK = 2;       # soft-lock thud — short low tone
+    SFX_CLEAR = 3;      # line clear (1-3) — rising two-note chime
+    SFX_TETRIS = 4;     # quad clear — rising four-note fanfare
+    SFX_LEVELUP = 5;    # level advance — bright two-note cue
+    SFX_TOPOUT = 6;     # game over — descending sting
+}
+
+enum SfxConst {
+    SFX_MAX_BYTES = 4096;   # longest cue (the fanfare) fits well under this
+}
+
+# Render one note (synth amplitude) and advance the cursor.
+fn sfx_note(buf, off, freq, ms): i64 {
+    return synth_square(buf, off, synth_samples_for_ms(ms), freq, SYNTH_AMP);
+}
+
+# Render event `ev` into `buf` (>= SFX_MAX_BYTES). Returns the byte count.
+# Frequencies are an original, distinguishable set (ADR 0002) — not lifted
+# from any branded title's sound design.
+fn sfx_render(buf, ev): i64 {
+    var off = 0;
+    if (ev == SFX_MOVE) { return sfx_note(buf, off, 880, 12); }
+    if (ev == SFX_ROTATE) { return sfx_note(buf, off, 660, 14); }
+    if (ev == SFX_LOCK) { return sfx_note(buf, off, 220, 30); }
+    if (ev == SFX_CLEAR) {
+        off = sfx_note(buf, off, 660, 40);
+        off = sfx_note(buf, off, 880, 60);
+        return off;
+    }
+    if (ev == SFX_TETRIS) {
+        off = sfx_note(buf, off, 523, 50);
+        off = sfx_note(buf, off, 659, 50);
+        off = sfx_note(buf, off, 784, 50);
+        off = sfx_note(buf, off, 1047, 90);
+        return off;
+    }
+    if (ev == SFX_LEVELUP) {
+        off = sfx_note(buf, off, 784, 60);
+        off = sfx_note(buf, off, 1047, 80);
+        return off;
+    }
+    # SFX_TOPOUT — descending
+    off = sfx_note(buf, off, 440, 80);
+    off = sfx_note(buf, off, 330, 80);
+    off = sfx_note(buf, off, 220, 160);
+    return off;
+}
+
+# --- device shell (vani; untestable — needs a real /dev/snd) -----------
+
+var audio_dev = 0;
+var audio_muted = 0;
+var audio_buf = 0;
+
+# Open the ALSA playback device (8-bit mono at SYNTH_RATE). Best-effort: a
+# failed open leaves audio_dev 0 and the game runs silent. Allocates the
+# scratch render buffer regardless (so audio_play is safe before/without a
+# device). Call once at startup.
+fn audio_init(): i64 {
+    audio_buf = alloc(SFX_MAX_BYTES);
+    audio_dev = audio_open_playback(0, 0);
+    if (audio_dev != 0) {
+        audio_set_params(audio_dev, SYNTH_RATE, 1, 8);   # rate, channels, bits
+        audio_prepare(audio_dev);
+    }
+    return 0;
+}
+
+fn audio_is_muted(): i64 { return audio_muted; }
+
+# Flip mute; returns the new state (1 = muted).
+fn audio_toggle_mute(): i64 {
+    if (audio_muted == 0) { audio_muted = 1; } else { audio_muted = 0; }
+    return audio_muted;
+}
+
+# Play event `ev`. No-op (returns 0) when muted or with no device. Returns
+# the number of PCM bytes written otherwise. 8-bit mono => bytes == frames.
+fn audio_play(ev): i64 {
+    if (audio_muted == 1) { return 0; }
+    if (audio_dev == 0) { return 0; }
+    var n = sfx_render(audio_buf, ev);
+    audio_write(audio_dev, audio_buf, n);
+    return n;
+}
+
+fn audio_shutdown(): i64 {
+    if (audio_dev != 0) {
+        audio_drain(audio_dev);
+        audio_close(audio_dev);
+        audio_dev = 0;
+    }
+    return 0;
+}

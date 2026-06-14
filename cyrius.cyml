@@ -13,19 +13,21 @@ test = "src/test.cyr"
 output = "build/cyrius-polyomino"
 
 # Self-rolled on bare Cyrius stdlib (ADR 0003) — no engine/GPU/physics deps on
-# the critical path. M1–M3 (board, pieces, loop, render, input) need only the
-# stdlib below; expand as modules land.
+# the critical path. These ten modules cover board / pieces / loop / render /
+# input through M3.
 [deps]
 stdlib = ["string", "alloc", "fmt", "io", "fs", "str", "vec", "syscalls", "args", "assert"]
 
+# M4 audio uses vani's playback shim, vendored as a single self-contained file
+# at vendor/vani-core.cyr (included by src/main.cyr) rather than a [deps.vani]
+# git dependency. Reason: resolving vani as a git dep drags in its whole
+# manifest tree (patra ~160KB + yukti ~211KB + sakshi), which DCE does not
+# prune from vendored modules — it bloated the binary ~4x (488KB vs 136KB).
+# vani-core only needs syscalls, so the vendored copy builds clean against the
+# stdlib above. See vendor/README.md for provenance + how to refresh it.
+
 # Earmarked external deps — dormant until their milestone, kept commented so
 # the build stays warning-free (an unused dep just adds link warnings + weight).
-#
-# vani — audio device I/O (M4 sound effects). Cyrius-native; cyrius-doom pins 0.9.4.
-# [deps.vani]
-# git = "https://github.com/MacCracken/vani.git"
-# tag = "0.9.4"
-# modules = ["dist/vani-core.cyr"]
 #
 # sankoch — high-score file compression (M5). sigil — high-score integrity hash (M5).
 # [deps.sankoch]

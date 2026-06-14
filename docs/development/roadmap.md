@@ -129,15 +129,25 @@ invariant still holds with the 7-bag seeded.
 richer per-row line-clear animation (needs splitting the lock/detect/clear
 steps in `world.cyr`).
 
-### M4 — Audio pass (v0.5.0)
+### M4 — Audio pass (v0.5.0) — ✅ shipped 2026-06-14
 
-- `src/audio.cyr` — sound effects: move/rotate blip, soft-lock thud, line-clear chime, **quad-clear fanfare**, level-up cue, top-out sting
-- Era-spirit synthesis (square / simple FM), no sampled audio. Routed through **vani** (the Cyrius audio device surface cyrius-doom already consumes) — *available*, not a pending-port gate
-- Optional slot-loaded music from `~/.cyrius-polyomino/music/` (user-provided `.ogg`); **silent by default if absent**. The canonical falling-block theme is *not* shipped (it carries trademark/licensing baggage even where the underlying folk tune is public-domain) — any bundled music is original composition ([ADR 0002](../adr/0002-original-assets-only.md))
-- Mute toggle
+Shipped (253 headless assertions; detail in [`CHANGELOG.md`](../../CHANGELOG.md) `[0.5.0]`):
 
-**Acceptance**: audio reinforces the gameplay rhythm without demanding
-attention; playtest confirms the line-clear cues land on the clear, not after.
+- ✅ `src/synth.cyr` — original square-wave PCM synthesis (8-bit mono, decay envelope; pure, no sampled audio per [ADR 0002](../adr/0002-original-assets-only.md))
+- ✅ `src/audio.cyr` — the six SFX cues (move/rotate blip, soft-lock thud, line-clear chime, **quad-clear fanfare**, level-up cue, top-out sting) as an event→note map, routed through **vani**'s `audio_*` ALSA shim
+- ✅ **Mute toggle** (`m`)
+- ✅ vani **vendored** as `vendor/vani-core.cyr` (the playback `core` profile) rather than a git dep — the full git tree (patra+yukti+sakshi) can't be DCE-pruned and bloated the binary ~4×; the self-contained core builds lean
+
+**Acceptance met**: the synth + event mapping are deterministic and tested; the
+cues fire at the right moments in the loop (clear/tetris on the clearing lock,
+level-up on the tick-over, sting on top-out). Mix/timing *feel* on real
+hardware is the carried-forward playtest item.
+
+**Carried forward** (not blocking): console playtest of SFX timing/mix and the
+blocking-write smoothness; optional user-provided `.ogg` music slot from
+`~/.cyrius-polyomino/music/` (**silent by default**; deferred — needs an Ogg
+decoder, out of scope for the SFX cut). No canonical theme tune is shipped
+([ADR 0002](../adr/0002-original-assets-only.md)).
 
 ### M5 — High-score persistence (v0.6.0)
 

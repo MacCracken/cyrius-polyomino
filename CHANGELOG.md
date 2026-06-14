@@ -4,6 +4,41 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-06-14
+
+**M4 — audio pass.** Era-spirit sound effects on the proven core: original
+square-wave synthesis (ADR 0002 — no sampled audio, no canonical theme tune)
+routed to ALSA through vani. The synthesis and event mapping are pure integer
+PCM, headless-tested (253 assertions, up from 235); the device routing is
+best-effort and silent without a sound card (CI / no `/dev/snd`), the way
+`present.cyr` fronts the framebuffer. Sound is inherently playtest-gated.
+
+### Added
+- **`synth.cyr` — square-wave tone synthesis.** Pure 8-bit mono PCM at
+  11025 Hz: `synth_square` renders a frequency for N samples with a linear
+  decay envelope (chiptone fade, no click). Deterministic, no float, no I/O —
+  assertable sample-by-sample.
+- **`audio.cyr` — SFX events + vani playback.** `sfx_render` maps a game
+  event to a short note sequence (the six cues: move/rotate blip, soft-lock
+  thud, line-clear chime, quad-clear fanfare, level-up cue, top-out sting) in
+  an original frequency set (ADR 0002). The device shell (`audio_init` /
+  `audio_play` / `audio_shutdown`) drives vani's `audio_*` ALSA API; it
+  no-ops cleanly with no device or when muted.
+- **Mute toggle** — `m` key (`ACT_MUTE` / `audio_toggle_mute`).
+- **Audio wired into the loop** — move/rotate blips on a successful
+  move/rotate; lock/clear/tetris cues distinguished after a hard drop or
+  gravity lock (clear count, or a board-cell gain for a clear-less lock);
+  level-up cue on a level tick; top-out sting on game over.
+
+### Changed
+- **vani vendored as a single file** at `vendor/vani-core.cyr` (the playback
+  `core` profile) rather than a `[deps.vani]` git dependency. The git dep
+  drags vani's whole manifest tree (patra ~160 KB + yukti ~211 KB + sakshi)
+  into the link — DCE can't prune vendored modules, so it bloated the binary
+  ~4× (488 KB → 136 KB once vendored). `vani-core` is self-contained (raw
+  ALSA over syscalls), so the stdlib list stays the lean ten. Provenance +
+  refresh steps in [`vendor/README.md`](vendor/README.md).
+
 ## [0.4.0] - 2026-06-14
 
 **M3 — modern guideline layer.** Layers the modern "feel" features on top of

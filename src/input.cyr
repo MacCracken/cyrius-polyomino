@@ -11,7 +11,7 @@
 #
 # Controls: a / left-arrow = move left, d / right = move right,
 # s / down = soft drop, w / up = rotate CW, z = rotate CCW,
-# space = hard drop, c = hold, q / ESC = quit.
+# space = hard drop, c = hold, m = mute, q / ESC = quit.
 
 enum InputAction {
     ACT_LEFT = 1;
@@ -22,6 +22,7 @@ enum InputAction {
     ACT_QUIT = 32;
     ACT_HARD = 64;
     ACT_HOLD = 128;
+    ACT_MUTE = 256;
 }
 
 enum TermConst {
@@ -41,6 +42,7 @@ fn poly_key_action(ch): i64 {
     if (ch == 119) { return ACT_ROT_CW; }   # 'w'
     if (ch == 122) { return ACT_ROT_CCW; }  # 'z'
     if (ch == 99) { return ACT_HOLD; }      # 'c'
+    if (ch == 109) { return ACT_MUTE; }     # 'm'
     if (ch == 113) { return ACT_QUIT; }     # 'q'
     return 0;
 }

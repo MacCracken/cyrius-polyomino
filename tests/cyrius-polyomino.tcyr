@@ -11,6 +11,9 @@ include "src/world.cyr"
 include "src/framebuf.cyr"
 include "src/render.cyr"
 include "src/hud.cyr"
+include "vendor/vani-core.cyr"
+include "src/synth.cyr"
+include "src/audio.cyr"
 include "src/input.cyr"
 include "src/das.cyr"
 
@@ -640,6 +643,51 @@ fn test_render() {
     return 0;
 }
 
+# --- synth / audio -----------------------------------------------------
+
+fn test_synth() {
+    test_group("synth");
+    assert_eq(synth_samples_for_ms(1000), 11025, "1s = SYNTH_RATE samples");
+    assert_eq(synth_samples_for_ms(12), 132, "12ms sample count");
+
+    var sbuf[256];
+    # rest (freq 0) is pure silence at the 128 mid-level
+    synth_square(&sbuf, 0, 10, 0, 40);
+    assert_eq(load8(&sbuf), 128, "rest sample 0 is silence");
+    assert_eq(load8(&sbuf + 9), 128, "rest sample 9 is silence");
+
+    # 880Hz note: period 12, half 6. Sample 0 is the high half at full amp
+    # (128+40); sample 6 is the low half with the decay envelope applied.
+    synth_square(&sbuf, 0, 132, 880, 40);
+    assert_eq(load8(&sbuf), 168, "square high half at full amplitude");
+    assert_eq(load8(&sbuf + 6), 90, "square low half with decay (128-38)");
+
+    # the write cursor advances by the sample count
+    assert_eq(synth_square(&sbuf, 0, 50, 440, 40), 50, "cursor advances by n");
+    return 0;
+}
+
+fn test_audio() {
+    test_group("audio");
+    var abuf[4096];
+    # event -> byte counts (8-bit mono => bytes == samples)
+    assert_eq(sfx_render(&abuf, SFX_MOVE), 132, "move blip = 12ms");
+    assert_eq(sfx_render(&abuf, SFX_CLEAR), 1102, "clear chime = 40ms + 60ms");
+    assert_eq(sfx_render(&abuf, SFX_TETRIS), 2645, "fanfare = three 50ms + one 90ms");
+    assert_eq(sfx_render(&abuf, SFX_TOPOUT) < SFX_MAX_BYTES, 1, "sting fits the buffer");
+    # the rendered cue starts as audible PCM, not silence
+    sfx_render(&abuf, SFX_MOVE);
+    assert_eq(load8(&abuf), 168, "rendered event begins with a tone sample");
+
+    # mute toggle + the no-device / muted no-op (no real /dev/snd in CI)
+    assert_eq(audio_is_muted(), 0, "starts unmuted");
+    assert_eq(audio_toggle_mute(), 1, "toggle mutes");
+    assert_eq(audio_play(SFX_MOVE), 0, "muted play is a no-op");
+    assert_eq(audio_toggle_mute(), 0, "toggle unmutes");
+    assert_eq(audio_play(SFX_MOVE), 0, "no-device play is a no-op");
+    return 0;
+}
+
 # --- input -------------------------------------------------------------
 
 fn test_input() {
@@ -651,6 +699,7 @@ fn test_input() {
     assert_eq(poly_key_action(119), ACT_ROT_CW, "w -> rotate CW");
     assert_eq(poly_key_action(122), ACT_ROT_CCW, "z -> rotate CCW");
     assert_eq(poly_key_action(99), ACT_HOLD, "c -> hold");
+    assert_eq(poly_key_action(109), ACT_MUTE, "m -> mute");
     assert_eq(poly_key_action(113), ACT_QUIT, "q -> quit");
     assert_eq(poly_key_action(120), 0, "unmapped key -> no action");
     return 0;
@@ -829,6 +878,8 @@ fn main() {
     test_world_scoring();
     test_render();
     test_hud();
+    test_synth();
+    test_audio();
     test_input();
     return assert_summary();
 }
