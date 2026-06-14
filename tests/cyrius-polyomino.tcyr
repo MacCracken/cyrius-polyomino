@@ -635,8 +635,8 @@ fn test_render() {
     render_world(surf2, w2);
     # O cell (1,0) at ghost origin (3,18) -> board (4,18) -> px (49,217),
     # dim amber: R = 230/4 = 57. Active O is up at rows 0,1, far above.
-    assert_eq(fb_get(surf2, 4 * CELL + 1, 18 * CELL + 1, 0), 57, "ghost cell drawn dim");
-    assert_eq(fb_get(surf2, 4 * CELL + 1, 1, 0), 230, "active O still full brightness");
+    assert_eq(fb_get(surf2, (4 * CELL) + 1, (18 * CELL) + 1, 0), 57, "ghost cell drawn dim");
+    assert_eq(fb_get(surf2, (4 * CELL) + 1, 1, 0), 230, "active O still full brightness");
     return 0;
 }
 

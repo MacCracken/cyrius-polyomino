@@ -80,7 +80,7 @@ cyrius test                          # run [build].test + tests/*.tcyr
 - Do not skip tests before claiming changes work
 - Do not use `sys_system()` with unsanitized input — command injection
 - Do not trust external data (file / network / args) without validation — save files are validated + sigil-hash-checked before load
-- Do not modify `lib/` files (vendored stdlib / dep symlinks)
+- Do not commit or hand-edit `lib/` — it is the resolved stdlib snapshot, **gitignored** and materialised by `cyrius deps` from the version-pinned toolchain (`cyrius.cyml [package].cyrius`). A committed copy goes stale vs the pinned compiler's own stdlib (the `cwd ./lib/ shadows version-pinned …` build note). Run `cyrius deps` to (re)materialise it; CI does this every run.
 - Do not hardcode toolchain versions in CI YAML — `cyrius = "X.Y.Z"` in `cyrius.cyml` is the source of truth
 - Do not inline volatile state in this file — `docs/development/state.md` is the home
 

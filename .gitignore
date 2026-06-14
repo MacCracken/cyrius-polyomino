@@ -1,4 +1,9 @@
 /build/
+# Resolved stdlib snapshot — materialised by `cyrius deps` from the
+# version-pinned toolchain (cyrius.cyml [package].cyrius). Never committed:
+# a vendored copy goes stale vs the pinned compiler's own stdlib (the
+# "cwd ./lib/ shadows version-pinned …" build note). CI runs `cyrius deps`.
+/lib/
 *.core
 .claude/
 .idea/
