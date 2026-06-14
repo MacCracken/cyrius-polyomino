@@ -37,13 +37,13 @@ framebuffer renderer, and input rather than depending on the heavier game stack
 — following the proven cyrius-doom / cyrius-bb pattern. A discrete cell grid
 doesn't need an ECS engine or a rigid-body physics crate.
 
-Two first-party crates are earmarked for later milestones:
+First-party crates this game leans on:
 
-| Crate | Purpose | When |
-|-------|---------|------|
-| [vani](https://github.com/MacCracken/vani)     | Audio device I/O (sound effects)      | M4 |
-| [sankoch](https://github.com/MacCracken/sankoch) | High-score file compression          | M5 |
-| [sigil](https://github.com/MacCracken/sigil)   | High-score integrity hash             | M5 |
+| Crate | Purpose | Status |
+|-------|---------|--------|
+| [vani](https://github.com/MacCracken/vani)       | Audio device I/O (sound effects)  | in use — `core` profile vendored at `vendor/vani-core.cyr` (M4) |
+| [sankoch](https://github.com/MacCracken/sankoch) | High-score file compression       | earmarked (M5) |
+| [sigil](https://github.com/MacCracken/sigil)     | High-score integrity hash         | earmarked (M5) |
 
 Deferred to later, more in-depth projects (not this one): [mabda](https://github.com/MacCracken/mabda)
 (GPU), [kiran](https://github.com/MacCracken/kiran) (engine), [impetus](https://github.com/MacCracken/impetus)

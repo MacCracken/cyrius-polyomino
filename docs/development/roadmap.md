@@ -19,135 +19,48 @@ Same retro-game-in-Cyrius lineage as [cyrius-doom](https://github.com/MacCracken
 integer grid logic** — deterministic, fully unit-testable headless, renderer
 and input self-rolled on bare stdlib ([ADR 0003](../adr/0003-self-rolled-primitives.md)).
 
-**Shape of the plan**: an MVP-first ramp. M1–M2 ship a *classic* playable game
-(grid, seven tetrominoes, gravity, line clears, scoring, level speed-curve).
-M3 then layers the *modern guideline* features (SRS rotation + wall kicks,
-7-bag, hold, ghost, hard drop) on top of a core proven to work. Audio, save,
-and polish follow the same milestone cadence cyrius-bb uses.
+**Shape of the plan**: an MVP-first ramp — a *classic* playable game first
+(M1–M2), then the *modern guideline* layer on a proven core (M3), then audio
+(M4), high-score save (M5), and polish (M6). Shipped through M4; M5–M6 remain.
 
 ## v1.0 criteria
 
-- [ ] All milestones M1–M6 complete; classic core + modern guideline layer both shipped
-- [ ] Public-facing behavior frozen — board geometry, scoring table, and rotation system documented and tested
-- [ ] Deterministic headless simulation: a fixed input + seed sequence produces a byte-identical board state and score (the speedrun/replay invariant)
-- [ ] Test coverage adequate for the surface area (≥100 assertions; every module's logic exercised headless)
-- [ ] Benchmarks captured in `docs/benchmarks.md` (board step, line-clear scan, collision)
-- [ ] Interactive console playthrough verified on a real Linux `/dev/fb0` console (top-out, level-up, line-clear feel)
-- [ ] CHANGELOG complete from v0.1.0 onward
-- [ ] Security audit pass (`docs/audit/YYYY-MM-DD-audit.md`)
-- [ ] Original assets only — no trademarked names, sprites, palettes, or the canonical theme tune ([ADR 0002](../adr/0002-original-assets-only.md))
+- [ ] All milestones M1–M6 complete (M1–M4 done; M5 save + M6 polish remain)
+- [ ] Public-facing behavior frozen — board geometry, scoring table, and rotation system documented and tested (documented + tested; freeze is a v1.0 act)
+- [x] Deterministic headless simulation: a fixed input + seed sequence produces a byte-identical board state and score (the speedrun/replay invariant)
+- [x] Test coverage adequate for the surface area (≥100 assertions; every module's logic exercised headless) — 253 assertions
+- [ ] Benchmarks captured (board step, line-clear scan, collision) — `bench-history.csv` seeded; promote to `docs/benchmarks.md`
+- [ ] Interactive console playthrough verified on a real Linux `/dev/fb0` console + sound card (top-out, level-up, line-clear feel, SFX timing)
+- [x] CHANGELOG complete from v0.1.0 onward
+- [ ] Security audit pass covering the M3/M4 code (`docs/audit/YYYY-MM-DD-audit.md`; the 2026-05-26 P(-1) pass predates them)
+- [x] Original assets only — no trademarked names, sprites, palettes, or the canonical theme tune ([ADR 0002](../adr/0002-original-assets-only.md))
 
 ## Milestones
 
-### M0 — Scaffold (v0.1.0) — ✅ shipped 2026-05-26
+### Shipped (M0–M4)
 
-- `cyrius init` scaffold landed; binary-vs-library decision (binary — game)
-- Project identity set: original polyomino puzzle, generic homage (not Tetris-branded)
-- ADR 0001 (puzzle-from-observation), ADR 0002 (original-assets-only), ADR 0003 (self-rolled primitives) seeded
-- Doc-tree per [first-party-documentation.md](https://github.com/MacCracken/agnosticos/blob/main/docs/development/first-party/first-party-documentation.md)
-- Toolchain pinned `cyrius = "6.0.1"` (matches cyrius-bb / cyrius-doom)
+The classic core, the modern guideline layer, and audio are all in — per-release
+detail in [`CHANGELOG.md`](../../CHANGELOG.md); live surface in [`state.md`](state.md).
 
-### M1 — Playable core / "it's a game" (v0.2.0) — ✅ shipped 2026-05-26
+| Milestone | Version | Date | Summary |
+|-----------|---------|------|---------|
+| M0 — Scaffold | 0.1.0 | 2026-05-26 | `cyrius init`, identity, ADRs 0001–0003, doc tree, toolchain pin |
+| M1 — Playable core | 0.2.0 | 2026-05-26 | deterministic integer core + self-rolled I/O; pieces fall/lock/clear, top-out; P(-1) hardening |
+| M2 — Progression & feel | 0.3.0 | 2026-06-03 | per-level gravity curve, DAS, lock delay, HUD (score/level/lines + next), clear flash, game-over screen |
+| M3 — Modern guideline layer | 0.4.0 | 2026-06-14 | SRS wall kicks, 7-bag, hold, ghost, hard drop, multi-NEXT, T-spin/B2B/combo scoring |
+| M4 — Audio pass | 0.5.0 | 2026-06-14 | original square-wave SFX cues via vendored vani, mute toggle |
 
-*The classic MVP. The point where pieces fall, lock, and lines clear.*
+**Carried forward from shipped milestones** (not blocking; mostly playtest-gated):
 
-Shipped: the deterministic integer core + self-rolled I/O, 121 headless
-assertions, P(-1) hardening pass (benchmarks + security audit, 2 LOW fixed).
-fmt/lint/vet clean; DCE binary 85,912 B. Detail in [`CHANGELOG.md`](../../CHANGELOG.md)
-`[0.2.0]`.
-
-**Carried forward** (not blocking): console playtest of the interactive loop +
-`/dev/fb0` present on a real Linux console — build/lint + headless-smoke-verified
-only so far (no console/framebuffer in dev/CI).
-
-Self-rolled on bare stdlib ([ADR 0003](../adr/0003-self-rolled-primitives.md)),
-following the cyrius-doom / cyrius-bb pattern:
-
-- `src/board.cyr` — the 10×20 visible playfield (+ hidden spawn/vanish rows above), cell occupancy grid, lock-down, full-row detection + clear + compaction
-- `src/piece.cyr` — the seven tetrominoes (I, O, T, S, Z, J, L) as cell offsets, four rotation states each, naïve rotation (no wall kicks yet — that's M3)
-- `src/rng.cyr` — piece sequence generator; **seedable** (deterministic for tests/replays). Uniform random to start; 7-bag arrives in M3
-- `src/world.cyr` — game state + `world_step()`: gravity-on-tick, move L/R, soft drop, rotate, spawn-next, lock, top-out detection
-- `src/score.cyr` — line counter + classic line-clear scoring (single/double/triple/quad), level counter
-- `src/framebuf.cyr` — offscreen RGB surface + clipped fill + PPM dump (self-rolled; cyrius-doom/bb pattern)
-- `src/render.cyr` — draw locked cells + active piece as flat blocks
-- `src/input.cyr` — raw-tty: left / right / soft-drop / rotate / quit (+ pure key→action decoder for headless tests)
-- `src/tick.cyr` — ~60 fps frame pacing + gravity interval
-- `src/present.cyr` — best-effort `/dev/fb0` blit (console-only)
-- `src/main.cyr` — real-time loop **and** a headless `cyrius-polyomino <frames>` smoke mode (step N ticks from a seed, dump a PPM, print score + lines)
-- Headless deterministic unit tests in `tests/cyrius-polyomino.tcyr` (target ≥100 assertions across board / piece / rng / world / score / render / input-decode)
-
-**Acceptance**: a piece spawns at the top, falls under gravity, moves and
-rotates within the well, locks when it lands, completed rows clear and shift
-everything above down, score accrues, and a stack that reaches the top ends the
-game. One deterministic headless run reproduces a known board + score; the
-interactive loop is playable on a Linux console.
-
-### M2 — Progression & feel (v0.3.0) — ✅ shipped 2026-06-03
-
-*Turn the loop into a game with depth — classic difficulty curve.*
-
-Shipped (160 headless assertions; detail in [`CHANGELOG.md`](../../CHANGELOG.md) `[0.3.0]`):
-
-- ✅ Per-level **gravity curve** — `gravity.cyr`, the documented NES frames-per-cell table (48→1), cited per [ADR 0001](../adr/0001-original-puzzle-from-observation.md)
-- ✅ **Level advance** every 10 lines (carried from M1's `level_for_lines`); lines + level + score displayed in the HUD
-- ✅ **DAS** (`das.cyr`, pure state machine) + soft-drop cadence via the tick's `soft` flag
-- ✅ **Next-piece preview** (single piece) in the HUD panel
-- ✅ **Line-clear flash** + an explicit **game-over screen** (waits for a key, not just loop-exit)
-- ✅ Basic **lock delay** — `world_tick` grace window with bounded move/rotate resets
-- ✅ HUD: score, level, lines, next piece (3x5 bitmap font, cyrius-bb pattern)
-
-**Carried forward** (not blocking): M2 console playtest to tune *feel*
-(the timing constants), the soft-drop tty-autorepeat smoothness, and the
-richer per-row line-clear animation (needs the lock/detect/clear split,
-deferred to M3 polish).
-
-**Acceptance**: a player can start at level 0, watch the speed ramp with each
-level, clear lines for classic scoring, and top out to a game-over screen with
-their final score. Speed curve traces to a documented public source.
-
-### M3 — Modern guideline layer (v0.4.0) — ✅ shipped 2026-06-14
-
-*Layer the modern "feel" features on the proven classic core.*
-
-Shipped (235 headless assertions; detail in [`CHANGELOG.md`](../../CHANGELOG.md) `[0.4.0]`):
-
-- ✅ **SRS** (Super Rotation System) — wall-kick offset tables (`srs.cyr`), the modern rotation standard; `world_rotate` tries the five kicks in order. Reference pinned in [`docs/standards/srs-rotation.md`](../standards/srs-rotation.md), cited per [ADR 0001](../adr/0001-original-puzzle-from-observation.md)
-- ✅ **7-bag randomizer** — `rng.cyr` Fisher-Yates bag feeding an upcoming-piece queue in the world; uniform RNG retired; still seedable
-- ✅ **Hold piece** — `world_hold`, one swap per drop, re-armed on lock
-- ✅ **Ghost piece** — `world_ghost_y` projection rendered dim behind the active piece
-- ✅ **Hard drop** — `world_hard_drop`, instant drop + lock + two-per-cell bonus
-- ✅ **Scoring extensions** — back-to-back, combo, and **T-spin** (3-corner rule, mini/proper) in `score.cyr` + `world_lock_sequence`
-- ✅ Multi-piece next-queue preview + HOLD slot in the HUD
-
-**Acceptance met**: rotation + wall-kick behavior matches the documented
-guideline (unit-tested kick tables, wall + floor kicks); hold / ghost /
-hard-drop / 7-bag all functional; back-to-back + combo + T-spin scoring
-correct against hand-calculated expectations. The deterministic-replay
-invariant still holds with the 7-bag seeded.
-
-**Carried forward** (not blocking): M2+M3 console playtest for *feel*; the
-richer per-row line-clear animation (needs splitting the lock/detect/clear
-steps in `world.cyr`).
-
-### M4 — Audio pass (v0.5.0) — ✅ shipped 2026-06-14
-
-Shipped (253 headless assertions; detail in [`CHANGELOG.md`](../../CHANGELOG.md) `[0.5.0]`):
-
-- ✅ `src/synth.cyr` — original square-wave PCM synthesis (8-bit mono, decay envelope; pure, no sampled audio per [ADR 0002](../adr/0002-original-assets-only.md))
-- ✅ `src/audio.cyr` — the six SFX cues (move/rotate blip, soft-lock thud, line-clear chime, **quad-clear fanfare**, level-up cue, top-out sting) as an event→note map, routed through **vani**'s `audio_*` ALSA shim
-- ✅ **Mute toggle** (`m`)
-- ✅ vani **vendored** as `vendor/vani-core.cyr` (the playback `core` profile) rather than a git dep — the full git tree (patra+yukti+sakshi) can't be DCE-pruned and bloated the binary ~4×; the self-contained core builds lean
-
-**Acceptance met**: the synth + event mapping are deterministic and tested; the
-cues fire at the right moments in the loop (clear/tetris on the clearing lock,
-level-up on the tick-over, sting on top-out). Mix/timing *feel* on real
-hardware is the carried-forward playtest item.
-
-**Carried forward** (not blocking): console playtest of SFX timing/mix and the
-blocking-write smoothness; optional user-provided `.ogg` music slot from
-`~/.cyrius-polyomino/music/` (**silent by default**; deferred — needs an Ogg
-decoder, out of scope for the SFX cut). No canonical theme tune is shipped
-([ADR 0002](../adr/0002-original-assets-only.md)).
+- **Console playtest** on a real Linux `/dev/fb0` + sound card — tune the M2/M3
+  *feel* (gravity / DAS / lock-delay constants, SRS kick feel) and M4 *audio*
+  (SFX timing/mix, blocking-write smoothness at 60 fps). The sim is proven
+  headless; *fun* is proven on console.
+- **Richer per-row line-clear animation** — needs splitting the
+  lock/detect/clear steps in `world.cyr` (today it locks-then-clears in one
+  step, so M2's flash strobes the whole well border).
+- **Optional user `.ogg` music** slot (`~/.cyrius-polyomino/music/`, silent by
+  default) — deferred from M4; needs an Ogg decoder.
 
 ### M5 — High-score persistence (v0.6.0)
 
@@ -174,12 +87,9 @@ expectation.
 - Playtest against the documented genre mechanics for *feel* (the unit tests prove determinism; playtest proves it's fun)
 - CI matrix green on all Cyrius-supported platforms; security audit pass; CHANGELOG complete; benchmarks captured
 
-**Target date**: _not yet pinned._ Candidate narrative anchor — the genre's
-origin (Alexey Pajitnov, June 1984). Unlike cyrius-bb (deliberately one-week
-scope), the M3 modern-guideline layer makes this a meaningfully larger build;
-pin the date once M1–M2 land and the per-milestone velocity is known, rather
-than committing speculatively now. Sibling context: cyrius-bb targets
-2026-06-13 and the summer-2026 arc's Beat 1 solstice demo is 2026-06-21.
+**Target date**: _not yet pinned._ M1–M4 landed quickly; what remains is M5
+(save), M6 (polish), and the console-playtest pass. Candidate narrative anchor
+— the genre's origin (Alexey Pajitnov, June 1984).
 
 ## Out of scope (for v1.0)
 
@@ -203,13 +113,13 @@ Kept here so future contributors don't quietly grow v1.0:
 
 | Milestone | Deps | Status |
 |-----------|------|--------|
-| M1–M3 | bare Cyrius stdlib (self-rolled core) | ✅ available |
-| M4 | `vani` (audio device I/O) | ✅ available (cyrius-doom pins 0.9.4) |
+| M1–M3 | bare Cyrius stdlib (self-rolled core) | ✅ done |
+| M4 | `vani` (audio device I/O) | ✅ done — vendored as `vendor/vani-core.cyr` (0.9.5 `core`) |
 | M5 | `sankoch` (compression), `sigil` (integrity hash) | ✅ available |
 
 No part of the critical path is blocked on a pending Rust→Cyrius port — the
 self-rolled decision ([ADR 0003](../adr/0003-self-rolled-primitives.md)) keeps
-M1–M3 on bare stdlib, and the audio/save deps are already Cyrius-native.
+the core on bare stdlib, and the audio/save deps are already Cyrius-native.
 
 See [ADR 0001](../adr/0001-original-puzzle-from-observation.md) for the
 homage-from-observation thesis, [ADR 0002](../adr/0002-original-assets-only.md)
