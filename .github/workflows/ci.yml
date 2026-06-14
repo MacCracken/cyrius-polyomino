@@ -20,19 +20,23 @@ jobs:
 
       - name: Install Cyrius toolchain
         run: |
-          CYRIUS_VERSION="${CYRIUS_VERSION:-$(grep 'cyrius *= *"' cyrius.cyml 2>/dev/null | head -1 | sed 's/.*"\(.*\)"/\1/')}"
+          set -e
+          # The cyrius.cyml `[package].cyrius` pin is the single source of
+          # truth for the toolchain version (CLAUDE.md § Rules) — no version
+          # is hardcoded in this YAML. Hand the pin to the upstream installer,
+          # which fetches the prebuilt release (sha256-verified) and lays it
+          # out under $HOME/.cyrius/versions/<v>/ — the versioned layout
+          # `cyrius deps` resolves the pinned stdlib snapshot from.
+          CYRIUS_VERSION="$(grep '^cyrius = ' cyrius.cyml | head -1 | sed 's/cyrius = "\(.*\)"/\1/')"
           echo "Installing Cyrius $CYRIUS_VERSION"
-          curl -sLO "https://github.com/MacCracken/cyrius/releases/download/$CYRIUS_VERSION/cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
-          tar xzf "cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
-          CYRIUS_DIR="cyrius-$CYRIUS_VERSION-x86_64-linux"
-          mkdir -p "$HOME/.cyrius/bin" "$HOME/.cyrius/lib"
-          cp "$CYRIUS_DIR/bin/"* "$HOME/.cyrius/bin/" 2>/dev/null || true
-          cp -r "$CYRIUS_DIR/lib/"* "$HOME/.cyrius/lib/" 2>/dev/null || true
-          chmod +x "$HOME/.cyrius/bin/"* 2>/dev/null || true
-          echo "$HOME/.cyrius/bin" >> $GITHUB_PATH
-          echo "CYRIUS_HOME=$HOME/.cyrius" >> $GITHUB_ENV
+          curl -sSf https://raw.githubusercontent.com/MacCracken/cyrius/main/scripts/install.sh | \
+            CYRIUS_VERSION="$CYRIUS_VERSION" sh
+          echo "$HOME/.cyrius/bin" >> "$GITHUB_PATH"
 
       - name: Resolve dependencies
+        # Materialises ./lib/ from the version-matched stdlib snapshot. ./lib/
+        # is gitignored (never committed — a vendored copy goes stale vs the
+        # pinned compiler's stdlib).
         run: cyrius deps
 
       - name: Build
@@ -41,15 +45,23 @@ jobs:
           cyrius build src/main.cyr build/${{ github.event.repository.name }}
 
       - name: Lint
+        # Hard gate: any `warn` line fails CI (matches patra / sigil).
         run: |
-          for f in src/*.cyr; do cyrius lint "$f"; done
+          fail=0
+          for f in src/*.cyr; do
+            out=$(cyrius lint "$f" 2>&1 || true)
+            echo "$out"
+            if echo "$out" | grep -qE '^[[:space:]]*warn '; then
+              echo "lint: warnings in $f"; fail=1
+            fi
+          done
+          [ $fail -eq 0 ] || { echo "lint: warnings present"; exit 1; }
 
       - name: Test
-        # Explicit .tcyr path — matches cyrius-bb / cyrius-doom. The
-        # released 6.0.1 toolchain's bare `cyrius test` auto-discovery
-        # reports "No .tcyr files found in tests/tcyr/ or tests/" in CI;
-        # naming the file is the reliable form. The grep gate fails the
-        # job unless the summary line reports 0 failures.
+        # Explicit .tcyr path — matches cyrius-bb / cyrius-doom / patra.
+        # Bare `cyrius test` auto-discovery can miss the file in CI; naming
+        # it is the reliable form. The grep gate fails the job unless the
+        # summary line reports 0 failures.
         run: |
           cyrius test tests/cyrius-polyomino.tcyr 2>&1 | tee /tmp/test_output
           tail -1 /tmp/test_output | grep ', 0 failed'

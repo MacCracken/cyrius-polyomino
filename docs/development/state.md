@@ -43,7 +43,7 @@ tag is the user's to create.
 
 ## Toolchain
 
-- **Cyrius pin**: `6.0.1` (in `cyrius.cyml [package].cyrius`) — matches cyrius-bb / cyrius-doom.
+- **Cyrius pin**: `6.2.2` (in `cyrius.cyml [package].cyrius`) — bumped from 6.0.1 at the 0.4.0 cut (clears the 6.0.1↔wrapper drift; CI installs the pin via the upstream `install.sh`). The stdlib `lib/` is materialised by `cyrius deps`, not committed.
 
 ## Source
 

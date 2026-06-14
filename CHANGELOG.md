@@ -52,6 +52,16 @@ headless but still want a console playtest for *feel*.
 - **`world.cyr` struct grew** for the bag queue, hold slot, and
   rotation/back-to-back/combo/T-spin tracking; the deterministic mutators
   remain timing-free. The single `WO_NEXT` slot was replaced by the queue.
+- **Toolchain pin bumped 6.0.1 → 6.2.2** (`cyrius.cyml [package].cyrius`),
+  clearing the long-standing pin↔wrapper drift warning.
+- **CI/release workflows repaired** to install the toolchain via the upstream
+  `install.sh` (reads the pin from `cyrius.cyml`, lays out the versioned
+  `~/.cyrius/versions/<v>/` tree that `cyrius deps` resolves from) instead of
+  a manual flat tarball copy; lint is now a hard gate (any `warn` fails CI).
+- **`lib/` is no longer committed** — the resolved stdlib snapshot is
+  gitignored and materialised by `cyrius deps` from the version-pinned
+  toolchain, so the repo can't carry a stale copy (removed 81 vendored files;
+  the `cwd ./lib/ shadows version-pinned …` note no longer fires).
 
 ## [0.3.0] - 2026-06-03
 

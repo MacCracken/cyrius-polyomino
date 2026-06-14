@@ -5,7 +5,7 @@ description = "An original falling-block puzzle in Cyrius — generic homage to 
 license = "GPL-3.0-only"
 repository = "https://github.com/MacCracken/cyrius-polyomino"
 language = "cyrius"
-cyrius = "6.0.1"
+cyrius = "6.2.2"
 
 [build]
 entry = "src/main.cyr"
