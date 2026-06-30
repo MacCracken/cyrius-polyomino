@@ -5,25 +5,24 @@
 
 ## Version
 
-**0.5.0 — M4 audio pass** (cut 2026-06-14). Adds era-spirit sound on the
-proven core: original square-wave synthesis (`synth.cyr` — 8-bit mono PCM,
-linear-decay blips, ADR 0002: no sampled audio) and an event→note SFX map
-(`audio.cyr`) for the six cues (move/rotate, lock thud, line-clear chime,
-quad fanfare, level-up, top-out), routed to ALSA via vani's `audio_*` shim.
-The synth + event mapping are pure and headless-tested (253 assertions, up
-from 235); the device layer is best-effort and silent without a sound card
-(CI / no `/dev/snd`), like `present.cyr`. Mute on `m`. vani is **vendored as a
-single file** (`vendor/vani-core.cyr`, the playback `core` profile) instead of
-a git dep — the full git tree (patra+yukti+sakshi) bloated the binary ~4×
-since DCE can't prune vendored modules. (Prior: 0.4.0 — M3 modern guideline
-layer, 2026-06-14: SRS wall kicks, 7-bag, hold, ghost, hard drop, multi-NEXT,
-T-spin/B2B/combo; 235 assertions; toolchain pinned 6.2.2 + CI repaired +
-`lib/` untracked. 0.3.0 — M2 progression & feel, 2026-06-03. 0.2.2 —
-interactive-loop input fix. 0.2.1 — framebuffer geometry fix. 0.2.0 — M1
-playable core, 2026-05-26. 0.1.0 — scaffold.) The version files are bumped to
-0.5.0; the git tag is the user's to create.
+**0.5.1 — toolchain bump + audio card-routing fix** (cut 2026-06-29). Pins
+Cyrius `6.2.2 → 6.3.5` (clears the pin-drift warning) and refreshes the
+vendored vani-core to 0.9.6 (header-only; the `audio_*` core API is
+byte-identical, no call-site changes). Fixes audio routing: `audio_init`
+opened card 0 device 0, which frequently has no PCM endpoint (left sound
+silent) — it now defaults to card 1 device 0 (vani's verified ALC897 analog
+target) via editable `AudioDev` constants (`AUDIO_CARD` / `AUDIO_DEVICE`). The
+bench harness now `include`s `lib/bench.cyr` explicitly (manual-include as of
+6.3.x; it was auto-prepended by `cyrius bench` before). 253 assertions green;
+lint clean. **0.6.0 stays reserved for the M5 high-score milestone.** (Prior:
+0.5.0 — M4 audio pass, 2026-06-14: square-wave synth + six SFX cues routed to
+ALSA via vani's `audio_*` shim, vani **vendored** as a single file
+(`vendor/vani-core.cyr`, `core` profile) to avoid the ~4× git-tree bloat;
+0.4.0 — M3 modern guideline layer; 0.3.0 — M2 progression; 0.2.2/0.2.1 —
+input/geometry fixes; 0.2.0 — M1 playable core; 0.1.0 — scaffold.) The version
+files are bumped to 0.5.1; the git tag is the user's to create.
 
-- **DCE binary**: 136,512 B (x86_64, static, stripped) — +24,296 B vs 0.4.0 (synth + SFX + the vendored vani-core ALSA shim). Vendoring vani-core rather than git-resolving it avoids a ~4× blowup (488 KB) from vani's transitive tree.
+- **DCE binary**: 137,032 B (x86_64, static, stripped) — +520 B vs 0.5.0's 136,512 B (the `AudioDev` card constants + the 0.9.6 vani-core refresh). Vendoring vani-core rather than git-resolving it avoids a ~4× blowup (488 KB) from vani's transitive tree.
 - **Tests**: 253 assertions, 0 failed (+18 for synth waveform/timing, SFX event byte counts + tone sample, mute toggle / no-device no-op, mute key decode). fmt + lint + vet clean.
 - **Benchmarks**: piece_word 22ns · board_collides 48ns · board_clear_lines 173ns · render_world 381µs/frame (`bench-history.csv`; M4 audio is off the render hot path).
 - **Security**: P(-1) audit clean — 0 CRIT/HIGH/MED, 2 LOW fixed ([2026-05-26 audit](../audit/2026-05-26-audit.md)). M4 adds no external input surface (synth is pure; vani-core opens `/dev/snd` read-of-caps only on a real device).
@@ -42,7 +41,7 @@ playable core, 2026-05-26. 0.1.0 — scaffold.) The version files are bumped to
 
 ## Toolchain
 
-- **Cyrius pin**: `6.2.2` (in `cyrius.cyml [package].cyrius`) — bumped from 6.0.1 at the 0.4.0 cut (clears the 6.0.1↔wrapper drift; CI installs the pin via the upstream `install.sh`). The stdlib `lib/` is materialised by `cyrius deps`, not committed.
+- **Cyrius pin**: `6.3.5` (in `cyrius.cyml [package].cyrius`) — bumped from 6.2.2 at the 0.5.1 cut (clears the pin-drift warning). The only 6.3.x adjustment polyomino needed: the `bench` harness is now a manual-include module, so `tests/cyrius-polyomino.bcyr` `include`s `lib/bench.cyr` explicitly. (polyomino's minimal stdlib has no sigil/thread_local, so it avoided the wider 6.3.x manual-include churn.) The stdlib `lib/` is materialised by `cyrius deps`, not committed. (History: 6.0.1 → 6.2.2 at 0.4.0; 6.0.1 was the 0.4.0 baseline.)
 
 ## Source
 
@@ -60,8 +59,8 @@ I/O + progression/feel + the modern guideline layer + audio, per
 - `src/framebuf.cyr` / `src/render.cyr` — offscreen surface + flat-cell renderer (placeholder palette, ADR 0002) + **dim ghost piece** (M3) + PPM dump
 - `src/hud.cyr` — 3x5 bitmap font (cyrius-bb pattern) + side-panel HUD (score/level/lines) + **multi-piece NEXT queue + HOLD slot** (M3)
 - `src/synth.cyr` — **square-wave PCM synthesis** (8-bit mono, decay envelope; pure) (M4)
-- `src/audio.cyr` — **SFX event→note map (`sfx_render`) + vani playback shell + mute** (M4); device half is best-effort, no-ops with no `/dev/snd`
-- `vendor/vani-core.cyr` — **vendored vani 0.9.5 `core` profile** (ALSA `audio_*` shim); single self-contained file, see `vendor/README.md`
+- `src/audio.cyr` — **SFX event→note map (`sfx_render`) + vani playback shell + mute** (M4); device half is best-effort, no-ops with no `/dev/snd`. Opens card 1 device 0 by default (`AudioDev` constants, 0.5.1) — the verified analog target, not card 0 (often no PCM)
+- `vendor/vani-core.cyr` — **vendored vani 0.9.6 `core` profile** (ALSA `audio_*` shim); single self-contained file, see `vendor/README.md`
 - `src/input.cyr` / `src/tick.cyr` / `src/present.cyr` — raw-tty input + decoder (now incl. **hard drop = space, hold = c, mute = m**), ~60 fps pacing, geometry-probed (`FBIOGET_{V,F}SCREENINFO`) integer-scaled + centred `/dev/fb0` blit
 - `src/main.cyr` — interactive loop (tick model + DAS + hard drop + hold + HUD + **audio cues** + game-over screen + line-clear flash) + deterministic headless `<frames> [seed]` smoke
 
@@ -70,7 +69,7 @@ Planned: `src/save.cyr` (M5, sankoch + sigil).
 ## Tests
 
 - `tests/cyrius-polyomino.tcyr` — **253 assertions, 0 failed**: piece, board, rng (LCG + 7-bag permutation/two-bag stream), world (move/SRS rotate/gravity/clear/top-out), SRS (decode/transitions/wall+floor kick/boxed-fail), hard drop, hold, scoring (combo/B2B/T-spin), world tick, gravity curve, DAS, score helpers, render (pixels + ghost), HUD (multi-queue/HOLD/layout), **synth (waveform / ms→samples / decay)**, **audio (SFX byte counts / tone sample / mute toggle / no-device no-op)**, input (key decode incl. hard drop / hold / mute). Deterministic + headless.
-- `tests/cyrius-polyomino.bcyr` — benchmark stub (no-op; real benches at the P(-1) pass)
+- `tests/cyrius-polyomino.bcyr` — benchmark stub (no-op; `include`s `lib/bench.cyr` since 6.3.x; real benches at the P(-1) pass)
 - `tests/cyrius-polyomino.fcyr` — fuzz stub
 - Playtest gate: the interactive loop + `/dev/fb0` present need a real Linux console (build/lint + headless-smoke-verified only so far).
 
@@ -80,7 +79,7 @@ Direct (declared in `cyrius.cyml`): bare stdlib — `string, alloc, fmt, io, fs,
 str, vec, syscalls, args, assert` ([ADR 0003](../adr/0003-self-rolled-primitives.md)).
 
 External: **vani-core vendored** as a single file (`vendor/vani-core.cyr`,
-0.9.5 `core` profile, audio) rather than a git dep — see `vendor/README.md`
+0.9.6 `core` profile, audio) rather than a git dep — see `vendor/README.md`
 for why (transitive-tree bloat) and how to refresh.
 
 Earmarked (commented out until their milestone): `sankoch` + `sigil` (M5

@@ -70,6 +70,15 @@ fn sfx_render(buf, ev): i64 {
 
 # --- device shell (vani; untestable — needs a real /dev/snd) -----------
 
+# Playback target. Defaults to vani's verified analog card (card 1 device 0 —
+# the ALC897 on the dev box). Card 0 device 0 frequently has no PCM endpoint,
+# which would leave audio silently degraded; route to the analog card instead.
+# Edit per box (see vani docs/development/state.md for the verified targets).
+enum AudioDev {
+    AUDIO_CARD = 1;
+    AUDIO_DEVICE = 0;
+}
+
 var audio_dev = 0;
 var audio_muted = 0;
 var audio_buf = 0;
@@ -80,7 +89,7 @@ var audio_buf = 0;
 # device). Call once at startup.
 fn audio_init(): i64 {
     audio_buf = alloc(SFX_MAX_BYTES);
-    audio_dev = audio_open_playback(0, 0);
+    audio_dev = audio_open_playback(AUDIO_CARD, AUDIO_DEVICE);
     if (audio_dev != 0) {
         audio_set_params(audio_dev, SYNTH_RATE, 1, 8);   # rate, channels, bits
         audio_prepare(audio_dev);

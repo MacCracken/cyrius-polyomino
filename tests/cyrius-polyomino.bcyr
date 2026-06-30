@@ -6,6 +6,10 @@
 # (~240 ns per start/stop pair on x86_64 Linux). See lib/bench.cyr header for
 # the full overhead-vs-batching guidance.
 
+# bench harness — explicit include as of cyrius 6.3.x (no longer auto-prepended
+# by `cyrius bench`); provides bench_new / bench_batch_* / bench_report.
+include "lib/bench.cyr"
+
 fn bench_noop(): i64 { return 0; }
 
 fn main(): i64 {

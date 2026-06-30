@@ -4,6 +4,37 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-06-29
+
+**Toolchain bump to Cyrius 6.3.5 + audio card-routing fix.** (Patch — 0.6.0 is
+reserved for the M5 high-score milestone.) Pins Cyrius
+`6.2.2 → 6.3.5` (clears the pin-drift warning) and refreshes the vendored
+vani-core to 0.9.6. Audio now defaults to the verified analog card instead of
+card 0 device 0, which frequently has no PCM endpoint (left sound silent).
+253 assertions green; lint clean.
+
+### Fixed
+- **Audio routes to a playable card.** `audio_init` opened
+  `audio_open_playback(0, 0)`, but card 0 device 0 often has no PCM endpoint,
+  leaving sound silently degraded. The default is now card 1 device 0 (vani's
+  verified ALC897 analog target) via editable `AudioDev` constants
+  (`AUDIO_CARD` / `AUDIO_DEVICE`); the no-device silent-degrade path is unchanged.
+
+### Changed
+- **Cyrius pin `6.2.2` → `6.3.5`** — clears the build-time pin-drift warning.
+  polyomino's minimal stdlib (no sigil / thread_local) needs no other dep edits.
+- **Vendored vani-core `0.9.5` → `0.9.6`** (`vendor/vani-core.cyr`) — header-only
+  refresh; the `audio_*` core API is byte-identical, no call-site changes.
+- **Bench harness**: `tests/cyrius-polyomino.bcyr` now `include "lib/bench.cyr"`
+  explicitly — the harness became a manual-include module at 6.3.x (it was
+  auto-prepended by `cyrius bench` before).
+
+### Verified
+- `CYRIUS_DCE=1 cyrius build`: clean, 137,032 B x86_64 ELF (no pin-drift).
+- `cyrius test tests/cyrius-polyomino.tcyr`: **253 / 253** pass.
+- `cyrius bench` (noop) + fuzz build: clean under 6.3.5.
+- `cyrius lint` + `cyrius fmt`: clean across changed files.
+
 ## [0.5.0] - 2026-06-14
 
 **M4 — audio pass.** Era-spirit sound effects on the proven core: original

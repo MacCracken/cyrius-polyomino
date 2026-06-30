@@ -7,7 +7,7 @@ Third-party single-file snapshots that are **deliberately committed** (unlike
 
 - **Source**: [vani](https://github.com/MacCracken/vani) `dist/vani-core.cyr`
   (the `core` profile — the playback-only ALSA PCM shim: the `audio_*` API).
-- **Version**: 0.9.5 (pins cyrius 6.2.1; we build on 6.2.2).
+- **Version**: 0.9.6 (pins cyrius 6.3.5; we build on 6.2.2).
 - **Why vendored instead of a `[deps.vani]` git dependency**: resolving vani
   as a git dep pulls its entire manifest tree (patra ~160 KB, yukti ~211 KB,
   sakshi) into `lib/` and links it — DCE does not prune whole vendored
