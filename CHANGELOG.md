@@ -4,6 +4,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-07-04
+
+### Changed
+
+- **Re-vendored `vani-core` 0.9.6 → 0.9.9** (`vendor/vani-core.cyr`). Currency bump —
+  0.9.9 adds the agnos `#ifdef` branches (compiled out on the host build) and is
+  stdlib-folded (cyrius 6.4.3). No functional change on the host audio path.
+
 ## [0.5.1] - 2026-06-29
 
 **Toolchain bump to Cyrius 6.3.5 + audio card-routing fix.** (Patch — 0.6.0 is
