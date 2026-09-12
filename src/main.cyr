@@ -165,7 +165,7 @@ fn run_interactive(seed): i64 {
             cleared = world_hard_drop(wd);
             if (cleared == 4) { audio_play(SFX_TETRIS); }
             else { if (cleared > 0) { audio_play(SFX_CLEAR); }
-                   else { audio_play(SFX_LOCK); } }
+                else { audio_play(SFX_LOCK); } }
             if (cleared > 0) { flash = FLASH_FRAMES; }
             if (world_level(wd) > lv) { audio_play(SFX_LEVELUP); }
         }
@@ -177,7 +177,7 @@ fn run_interactive(seed): i64 {
         cleared = world_tick(wd, soft);
         if (cleared == 4) { audio_play(SFX_TETRIS); }
         else { if (cleared > 0) { audio_play(SFX_CLEAR); }
-               else { if (board_count(world_board(wd)) > cells) { audio_play(SFX_LOCK); } } }
+            else { if (board_count(world_board(wd)) > cells) { audio_play(SFX_LOCK); } } }
         if (cleared > 0) { flash = FLASH_FRAMES; }
         if (world_level(wd) > lv) { audio_play(SFX_LEVELUP); }
 
