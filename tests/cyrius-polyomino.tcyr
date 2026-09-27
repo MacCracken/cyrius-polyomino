@@ -645,39 +645,92 @@ fn test_render() {
 
 # --- synth / audio -----------------------------------------------------
 
+# Signed S16_LE sample of channel `ch` (0 = L, 1 = R) in frame `f`.
+# load16 zero-extends, so fold the upper half back to negative.
+fn t_s16(buf, f, ch): i64 {
+    var v = load16(buf + (f * SYNTH_FRAME_BYTES) + (ch * 2));
+    if (v >= 32768) { v = v - 65536; }
+    return v;
+}
+
+# Frames in [0, n) whose L != R, or whose sample exceeds +/-amp.
+fn t_frame_faults(buf, n, amp): i64 {
+    var bad = 0;
+    var f = 0;
+    var s = 0;
+    while (f < n) {
+        s = t_s16(buf, f, 0);
+        if (s != t_s16(buf, f, 1)) { bad = bad + 1; }
+        else { if ((s > amp) || (s < (0 - amp))) { bad = bad + 1; } }
+        f = f + 1;
+    }
+    return bad;
+}
+
 fn test_synth() {
     test_group("synth");
-    assert_eq(synth_samples_for_ms(1000), 11025, "1s = SYNTH_RATE samples");
-    assert_eq(synth_samples_for_ms(12), 132, "12ms sample count");
+    # the device's own format: the probed codec rejects 11025 Hz 8-bit mono
+    assert_eq(SYNTH_RATE, 48000, "renders at 48 kHz");
+    assert_eq(SYNTH_FRAME_BYTES, SYNTH_CHANNELS * 2, "frame = channels x 16-bit");
+    assert_eq(synth_frames_for_ms(1000), 48000, "1s = SYNTH_RATE frames");
+    assert_eq(synth_frames_for_ms(12), 576, "12ms frame count");
 
-    var sbuf[256];
-    # rest (freq 0) is pure silence at the 128 mid-level
-    synth_square(&sbuf, 0, 10, 0, 40);
-    assert_eq(load8(&sbuf), 128, "rest sample 0 is silence");
-    assert_eq(load8(&sbuf + 9), 128, "rest sample 9 is silence");
+    var sbuf = alloc(576 * SYNTH_FRAME_BYTES);
+    # rest (freq 0) is digital silence (0) in both channels
+    synth_square(sbuf, 0, 10, 0, SYNTH_AMP);
+    assert_eq(t_s16(sbuf, 0, 0), 0, "rest frame 0 is silence (L)");
+    assert_eq(t_s16(sbuf, 9, 1), 0, "rest frame 9 is silence (R)");
 
-    # 880Hz note: period 12, half 6. Sample 0 is the high half at full amp
-    # (128+40); sample 6 is the low half with the decay envelope applied.
-    synth_square(&sbuf, 0, 132, 880, 40);
-    assert_eq(load8(&sbuf), 168, "square high half at full amplitude");
-    assert_eq(load8(&sbuf + 6), 90, "square low half with decay (128-38)");
+    # 880Hz note: period 54, half 27. Frame 0 is the high half at full amp;
+    # frame 27 is the low half with the decay applied: -(10240*549/576).
+    synth_square(sbuf, 0, 576, 880, SYNTH_AMP);
+    assert_eq(t_s16(sbuf, 0, 0), 10240, "square high half at full amplitude");
+    assert_eq(t_s16(sbuf, 27, 0), 0 - 9760, "square low half with decay");
+    # S16_LE: -9760 = 0xD9E0, low byte first
+    assert_eq(load8(sbuf + (27 * SYNTH_FRAME_BYTES)), 224, "S16_LE low byte first");
+    assert_eq(load8(sbuf + (27 * SYNTH_FRAME_BYTES) + 1), 217, "S16_LE high byte second");
+    assert_eq(t_frame_faults(sbuf, 576, SYNTH_AMP), 0, "every frame L == R, within +/-amp");
 
-    # the write cursor advances by the sample count
-    assert_eq(synth_square(&sbuf, 0, 50, 440, 40), 50, "cursor advances by n");
+    # the write cursor advances by the frame count; `off` is a frame index
+    assert_eq(synth_square(sbuf, 0, 50, 440, SYNTH_AMP), 50, "cursor advances by n");
+    assert_eq(synth_square(sbuf, 50, 10, 0, SYNTH_AMP), 60, "cursor from a frame offset");
+    assert_eq(t_s16(sbuf, 49, 1), 204, "frames before off untouched");
+    assert_eq(t_s16(sbuf, 50, 0), 0, "rest lands at frame off");
     return 0;
 }
 
 fn test_audio() {
     test_group("audio");
-    var abuf[4096];
-    # event -> byte counts (8-bit mono => bytes == samples)
-    assert_eq(sfx_render(&abuf, SFX_MOVE), 132, "move blip = 12ms");
-    assert_eq(sfx_render(&abuf, SFX_CLEAR), 1102, "clear chime = 40ms + 60ms");
-    assert_eq(sfx_render(&abuf, SFX_TETRIS), 2645, "fanfare = three 50ms + one 90ms");
-    assert_eq(sfx_render(&abuf, SFX_TOPOUT) < SFX_MAX_BYTES, 1, "sting fits the buffer");
+    var abuf = alloc(SFX_MAX_BYTES);
+    # event -> frame counts at 48 kHz (one frame = SYNTH_FRAME_BYTES bytes)
+    assert_eq(sfx_render(abuf, SFX_MOVE), 576, "move blip = 12ms");
+    assert_eq(sfx_render(abuf, SFX_ROTATE), 672, "rotate tick = 14ms");
+    assert_eq(sfx_render(abuf, SFX_LOCK), 1440, "lock thud = 30ms");
+    assert_eq(sfx_render(abuf, SFX_CLEAR), 4800, "clear chime = 40ms + 60ms");
+    assert_eq(sfx_render(abuf, SFX_TETRIS), 11520, "fanfare = three 50ms + one 90ms");
+    assert_eq(sfx_render(abuf, SFX_LEVELUP), 6720, "level-up = 60ms + 80ms");
+    assert_eq(sfx_render(abuf, SFX_TOPOUT), 15360, "sting = 80ms + 80ms + 160ms");
+    assert_eq(t_frame_faults(abuf, 15360, SYNTH_AMP), 0, "sting frames L == R, within +/-amp");
+
+    # sizing: the longest cue fits the render buffer, and the ring holds the
+    # worst one-frame burst (quad + level-up), so a write never blocks
+    assert_eq(SFX_MAX_BYTES, SFX_MAX_FRAMES * SYNTH_FRAME_BYTES, "render buffer = frames x frame bytes");
+    assert_eq(sfx_render(abuf, SFX_TOPOUT) <= SFX_MAX_FRAMES, 1, "longest cue fits the buffer");
+    var burst = sfx_render(abuf, SFX_TETRIS) + sfx_render(abuf, SFX_LEVELUP);
+    assert_eq(burst <= AUDIO_BUFFER_FRAMES, 1, "quad + level-up fits the ring");
+    assert_eq(AUDIO_BUFFER_FRAMES % AUDIO_PERIOD_FRAMES, 0, "ring is whole periods");
+    assert_eq(AUDIO_BUFFER_FRAMES / AUDIO_PERIOD_FRAMES <= 32, 1, "<= 32 periods (HD-Audio cap)");
+
     # the rendered cue starts as audible PCM, not silence
-    sfx_render(&abuf, SFX_MOVE);
-    assert_eq(load8(&abuf), 168, "rendered event begins with a tone sample");
+    sfx_render(abuf, SFX_MOVE);
+    assert_eq(t_s16(abuf, 0, 0), SYNTH_AMP, "rendered event begins with a tone sample");
+
+    # write-failure policy: only XRUN / suspend are worth a PREPARE + retry
+    assert_eq(audio_write_recoverable(0 - 32), 1, "-EPIPE (ring ran dry) re-prepares");
+    assert_eq(audio_write_recoverable(0 - 86), 1, "-ESTRPIPE (suspended) re-prepares");
+    assert_eq(audio_write_recoverable(576), 0, "a landed write needs no recovery");
+    assert_eq(audio_write_recoverable(0 - 19), 0, "-ENODEV (unplugged) is not retried");
+    assert_eq(audio_write_recoverable(0 - 77), 0, "-EBADFD is not retried");
 
     # mute toggle + the no-device / muted no-op (no real /dev/snd in CI)
     assert_eq(audio_is_muted(), 0, "starts unmuted");

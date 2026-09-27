@@ -22,17 +22,25 @@ file (`vendor/vani-core.cyr`, `core` profile) to avoid the ~4× git-tree bloat;
 input/geometry fixes; 0.2.0 — M1 playable core; 0.1.0 — scaffold.) The version
 files are bumped to 0.5.4; the git tag is the user's to create.
 
+**Unreleased on top of 0.5.4 — sound actually plays** (2026-09-26, no version
+bump). Hardware probing confirmed the M4 audio path was silent: the codec
+refuses 11025 Hz / mono / 8-bit (`-EINVAL`, unchecked), and every cue after
+the first hit an unrecovered XRUN. `synth.cyr` now renders 48 kHz S16_LE
+stereo; `audio.cyr` opens an explicit 32768-frame ring with silence-filled sw
+params, re-prepares on `-EPIPE`, and fails silent. Details in the CHANGELOG's
+`[Unreleased]`. Unreleased build: 75,376 B DCE, 275 assertions.
+
 - **DCE binary**: 75,328 B (x86_64, static, stripped) — +256 B vs 0.5.3's 75,072 B (+192 toolchain, +64 the vani null-handle guards). 0.5.1 recorded 137,032 B on 6.3.5; the DCE build was already ~75 KB by 6.6.2, so that drop predates this cut. Vendoring vani-core rather than git-resolving it avoids a ~4× blowup (488 KB) from vani's transitive tree.
 - **Tests**: 253 assertions, 0 failed (unchanged since 0.5.0's +18 for synth waveform/timing, SFX event byte counts + tone sample, mute toggle / no-device no-op, mute key decode). fmt + lint + vet clean.
 - **Benchmarks** (6.6.6): piece_word 24ns · board_collides 51ns · board_clear_lines 177ns · render_world 381µs/frame. The two micro-ops are 1–2 ns slower than on 6.6.2 in every interleaved pair (compiler-side; source unchanged); render is flat. `bench-history.csv` last recorded 0.2.0; M4 audio is off the render hot path.
 - **Security**: P(-1) audit clean — 0 CRIT/HIGH/MED, 2 LOW fixed ([2026-05-26 audit](../audit/2026-05-26-audit.md)). M4 adds no external input surface (synth is pure; vani-core opens `/dev/snd` read-of-caps only on a real device).
 - **Deps**: bare stdlib (ten modules) + **vani-core 1.2.5 vendored** at `vendor/vani-core.cyr` (audio). sankoch / sigil re-wire at M5.
 - **Caveat**: the interactive loop + `/dev/fb0` present are confirmed running
-  live on a real console (0.2.2). The M2/M3 *feel* layers and the new M4
-  *audio* layer — SFX timing/mix as it lands during play, and whether the
-  blocking ALSA writes (e.g. the ~240 ms fanfare, per-frame move blips on DAS
-  auto-repeat) stay smooth at 60 fps — build + headless-test but want a
-  console playtest to tune. Known tty limitation: a raw terminal has no
+  live on a real console (0.2.2). The M2/M3 *feel* layers and the M4 *audio*
+  layer — SFX timing/mix as it lands during play — build + headless-test but
+  want a console playtest to tune. (ALSA writes no longer stall the loop: the
+  32768-frame ring holds any one frame's cues, and `audio_play` measured
+  11–180 µs on the hardware.) Known tty limitation: a raw terminal has no
   key-release event, so DAS and soft-drop "hold" ride the kernel autorepeat
   stream (documented in `das.cyr`). In dev/CI (no console/framebuffer/sound)
   the simulation is proven by the 253 deterministic assertions + the seedable
@@ -60,8 +68,8 @@ I/O + progression/feel + the modern guideline layer + audio, per
 - `src/score.cyr` — base scoring (100/300/500/800 × level) + **T-spin `score_base`, `is_difficult` (B2B), `combo_bonus`** + level-per-10-lines (M3)
 - `src/framebuf.cyr` / `src/render.cyr` — offscreen surface + flat-cell renderer (placeholder palette, ADR 0002) + **dim ghost piece** (M3) + PPM dump
 - `src/hud.cyr` — 3x5 bitmap font (cyrius-bb pattern) + side-panel HUD (score/level/lines) + **multi-piece NEXT queue + HOLD slot** (M3)
-- `src/synth.cyr` — **square-wave PCM synthesis** (8-bit mono, decay envelope; pure) (M4)
-- `src/audio.cyr` — **SFX event→note map (`sfx_render`) + vani playback shell + mute** (M4); device half is best-effort, no-ops with no `/dev/snd`. Opens card 1 device 0 by default (`AudioDev` constants, 0.5.1) — the verified analog target, not card 0 (often no PCM)
+- `src/synth.cyr` — **square-wave PCM synthesis** (48 kHz S16_LE stereo, L == R, decay envelope; pure) (M4; 8-bit mono until the unreleased audio fix)
+- `src/audio.cyr` — **SFX event→note map (`sfx_render`) + vani playback shell + mute** (M4); device half is best-effort, no-ops with no `/dev/snd`. Opens card 1 device 0 by default (`AudioDev` constants, 0.5.1) — the verified analog target, not card 0 (often no PCM). 48 kHz S16_LE stereo on an explicit 1024 × 32 = 32768-frame ring with silence-filled sw params; re-prepares on XRUN (`audio_write_recoverable`); a device that refuses the format stays closed (silent)
 - `vendor/vani-core.cyr` — **vendored vani 1.2.5 `core` profile** (ALSA `audio_*` shim); single self-contained file, see `vendor/README.md`
 - `src/input.cyr` / `src/tick.cyr` / `src/present.cyr` — raw-tty input + decoder (now incl. **hard drop = space, hold = c, mute = m**), ~60 fps pacing, geometry-probed (`FBIOGET_{V,F}SCREENINFO`) integer-scaled + centred `/dev/fb0` blit
 - `src/main.cyr` — interactive loop (tick model + DAS + hard drop + hold + HUD + **audio cues** + game-over screen + line-clear flash) + deterministic headless `<frames> [seed]` smoke
@@ -70,7 +78,7 @@ Planned: `src/save.cyr` (M5, sankoch + sigil).
 
 ## Tests
 
-- `tests/cyrius-polyomino.tcyr` — **253 assertions, 0 failed**: piece, board, rng (LCG + 7-bag permutation/two-bag stream), world (move/SRS rotate/gravity/clear/top-out), SRS (decode/transitions/wall+floor kick/boxed-fail), hard drop, hold, scoring (combo/B2B/T-spin), world tick, gravity curve, DAS, score helpers, render (pixels + ghost), HUD (multi-queue/HOLD/layout), **synth (waveform / ms→samples / decay)**, **audio (SFX byte counts / tone sample / mute toggle / no-device no-op)**, input (key decode incl. hard drop / hold / mute). Deterministic + headless.
+- `tests/cyrius-polyomino.tcyr` — **275 assertions, 0 failed** (253 at 0.5.4): piece, board, rng (LCG + 7-bag permutation/two-bag stream), world (move/SRS rotate/gravity/clear/top-out), SRS (decode/transitions/wall+floor kick/boxed-fail), hard drop, hold, scoring (combo/B2B/T-spin), world tick, gravity curve, DAS, score helpers, render (pixels + ghost), HUD (multi-queue/HOLD/layout), **synth (48 kHz waveform / ms→frames / decay / S16_LE byte order / L == R + amplitude bound / frame offsets)**, **audio (SFX frame counts for all seven cues / render-buffer + ring sizing / tone sample / XRUN-retry policy / mute toggle / no-device no-op)**, input (key decode incl. hard drop / hold / mute). Deterministic + headless.
 - `tests/cyrius-polyomino.bcyr` — benchmark stub (no-op; `include`s `lib/bench.cyr` since 6.3.x; real benches at the P(-1) pass)
 - `tests/cyrius-polyomino.fcyr` — fuzz stub
 - Playtest gate: the interactive loop + `/dev/fb0` present need a real Linux console (build/lint + headless-smoke-verified only so far).
@@ -99,20 +107,19 @@ See [`roadmap.md`](roadmap.md). Immediate sequence:
 
 1. **M2–M4 console playtest** — verify on a real Linux console that the M2/M3
    *feel* (speed ramp, lock delay, DAS, soft drop, SRS kicks, hold, hard drop,
-   ghost, T-spin/B2B/combo scoring) and the new M4 *audio* (the six SFX cues
-   landing in time, mix balance, mute, and whether blocking ALSA writes stay
-   smooth at 60 fps — esp. the fanfare and per-frame move blips on DAS
-   auto-repeat) all feel right. Tune `gravity.cyr` / `das.cyr` / the SFX
-   note tables accordingly.
-   **Check first — sound may never play.** `audio_init` asks the raw `hw:1,0`
-   PCM for 11025 Hz / mono / 8-bit, but the dev box's card-1 codec advertises
-   only 16/20/24-bit at ≥ 32 kHz (`/proc/asound/card1/codec#0`), and a raw hw
-   device does no rate/format conversion — so `HW_PARAMS` most likely fails
-   (its return is unchecked) and every write is dropped. Separately,
-   `synth.cyr` renders *unsigned* 8-bit (silence = 128) while vani's
-   `bits = 8` programs *signed* S8 (vani 1.2.x adds `audio_set_params_fmt` for
-   an explicit format). Found at 0.5.4 from the code + codec caps; unverified
-   on hardware (that session had no `/dev/snd` access).
+   ghost, T-spin/B2B/combo scoring) and the M4 *audio* (the seven SFX cues
+   landing in time, mix balance, mute) all feel right. Tune `gravity.cyr` /
+   `das.cyr` / the SFX note tables accordingly. Cues queue rather than mix (a
+   cue fired mid-fanfare waits for it); if that feels late in play, the next
+   step is cyrius-doom's per-frame mixer.
+   **Resolved (unreleased): "sound may never play."** Flagged at 0.5.4 from
+   the code + codec caps, then confirmed with a silent hardware probe: the
+   card-1 PCM answers `(11025, 1, 8)` with `-EINVAL` (it takes only S16_LE /
+   S32_LE, 2 channels, ≥ 44.1 kHz). Fixed along with the XRUN that would have
+   dropped every cue after the first, the 21 ms default ring that would have
+   stalled the loop on long cues, and the stale-ring tails a deeper ring
+   exposes — see the CHANGELOG's `[Unreleased]`. By-ear check on the dev box:
+   _pending_.
 2. **M5 — high-score persistence** (v0.6.0): `src/save.cyr` — top-10 table at
    `~/.cyrius-polyomino/scores.cyb`, sankoch-compressed + sigil-hashed, with
    tamper detection and a score-entry UI on a qualifying game-over.

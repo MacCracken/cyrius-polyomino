@@ -3,16 +3,20 @@
 # Two halves, mirroring present.cyr's testable-core / device-shell split:
 #
 #   1. `sfx_render` (pure) maps a game event to a short sequence of
-#      square-wave notes (synth.cyr) in a buffer and returns the byte count.
+#      square-wave notes (synth.cyr) in a buffer and returns the frame count.
 #      Deterministic + headless-testable.
 #   2. The device shell (`audio_init` / `audio_play` / `audio_shutdown`)
 #      routes that buffer to the ALSA playback device via vani's `audio_*`
-#      PCM API. Best-effort: with no sound card (CI / no /dev/snd) the open
-#      fails, `audio_dev` stays 0, and `audio_play` is a silent no-op — the
-#      game runs unchanged. A mute toggle short-circuits playback too.
+#      PCM API. Best-effort: with no sound card (CI / no /dev/snd), or a
+#      device that refuses the format, `audio_dev` stays 0 and `audio_play`
+#      is a silent no-op — the game runs unchanged. A mute toggle
+#      short-circuits playback too.
 #
-# Requires (include order): synth.cyr — then this. vani's `audio_*` symbols
-# are provided by the [deps.vani] core module (auto-prepended).
+# Requires (include order): vendor/vani-core.cyr, synth.cyr — then this.
+# vani's `audio_*` API and ALSA constants come from vendor/vani-core.cyr (the
+# vendored `core` profile), which src/main.cyr and tests/cyrius-polyomino.tcyr
+# include explicitly just before synth.cyr — there is no [deps.vani] module
+# (see vendor/README.md for why).
 #
 # Original synthesis only (ADR 0002) — era-spirit blips, no sampled audio and
 # no canonical theme tune. Optional user music (M4 stretch) is not loaded yet.
@@ -27,16 +31,19 @@ enum SfxEvent {
     SFX_TOPOUT = 6;     # game over — descending sting
 }
 
+# Render buffer, heap-allocated by audio_init (64 KB — too big for the stack;
+# the CI security gate rejects stack buffers >= 64 KB).
 enum SfxConst {
-    SFX_MAX_BYTES = 4096;   # longest cue (the fanfare) fits well under this
+    SFX_MAX_FRAMES = 16384;     # longest cue (the 320 ms top-out sting, 15360 frames) + headroom
+    SFX_MAX_BYTES = 65536;      # SFX_MAX_FRAMES * SYNTH_FRAME_BYTES
 }
 
-# Render one note (synth amplitude) and advance the cursor.
+# Render one note (synth amplitude) and advance the frame cursor.
 fn sfx_note(buf, off, freq, ms): i64 {
-    return synth_square(buf, off, synth_samples_for_ms(ms), freq, SYNTH_AMP);
+    return synth_square(buf, off, synth_frames_for_ms(ms), freq, SYNTH_AMP);
 }
 
-# Render event `ev` into `buf` (>= SFX_MAX_BYTES). Returns the byte count.
+# Render event `ev` into `buf` (>= SFX_MAX_BYTES). Returns the frame count.
 # Frequencies are an original, distinguishable set (ADR 0002) — not lifted
 # from any branded title's sound design.
 fn sfx_render(buf, ev): i64 {
@@ -68,31 +75,106 @@ fn sfx_render(buf, ev): i64 {
     return off;
 }
 
-# --- device shell (vani; untestable — needs a real /dev/snd) -----------
+# --- device shell (vani; needs a real /dev/snd) --------------------------
 
 # Playback target. Defaults to vani's verified analog card (card 1 device 0 —
 # the ALC897 on the dev box). Card 0 device 0 frequently has no PCM endpoint,
 # which would leave audio silently degraded; route to the analog card instead.
 # Edit per box (see vani docs/development/state.md for the verified targets).
+#
+# Ring shape: 32 periods of 1024 frames = 32768 frames (~683 ms). HD-Audio
+# allows at most 32 periods, so a ring this deep needs 1024-frame periods.
+# It holds far more than any one frame's burst of cues (worst case a quad +
+# level-up, 18240 frames), so audio_write never blocks the 60 fps loop. Left
+# to pick, the kernel gives this codec a 1024-frame (21 ms) ring, and every
+# cue longer than that stalled the loop for the rest of its length.
 enum AudioDev {
     AUDIO_CARD = 1;
     AUDIO_DEVICE = 0;
+    AUDIO_PERIOD_FRAMES = 1024;
+    AUDIO_BUFFER_FRAMES = 32768;
+}
+
+# Negative errnos audio_write surfaces that one audio_prepare recovers.
+enum AudioErrno {
+    AUDIO_EPIPE = 32;       # XRUN: the ring ran dry and the kernel stopped the stream
+    AUDIO_ESTRPIPE = 86;    # the PCM was suspended (system sleep)
 }
 
 var audio_dev = 0;
 var audio_muted = 0;
 var audio_buf = 0;
 
-# Open the ALSA playback device (8-bit mono at SYNTH_RATE). Best-effort: a
-# failed open leaves audio_dev 0 and the game runs silent. Allocates the
-# scratch render buffer regardless (so audio_play is safe before/without a
-# device). Call once at startup.
+# Whether a failed audio_write is one audio_prepare fixes (1) or not (0).
+# -EPIPE is the normal state between cues: the ring is only fed on events,
+# so each cue ends with it running dry, and the kernel stops the stream
+# (XRUN) — every later write fails until a PREPARE. -ESTRPIPE (suspended)
+# also recovers with a PREPARE, which the kernel accepts from SUSPENDED.
+# Anything else (e.g. -ENODEV, an unplugged device) is not retried. Pure —
+# the retry policy is headless-testable; the ioctls it drives are not.
+fn audio_write_recoverable(w): i64 {
+    if (w == (0 - AUDIO_EPIPE)) { return 1; }
+    if (w == (0 - AUDIO_ESTRPIPE)) { return 1; }
+    return 0;
+}
+
+# SW_PARAMS for one-shot cues on a ring of `buffer_frames`: start on the
+# first frame written, stop when the ring runs dry (the XRUN audio_play
+# recovers from), and have the kernel keep every frame past the queued audio
+# zeroed (silence_threshold = silence_size = the whole ring). Without that,
+# the DMA plays whatever an earlier cue left in the ring after each cue ends,
+# until the next period interrupt notices the underrun — up to one period
+# (21 ms) of stale audio. vani's audio_set_sw_params pins both silence fields
+# to 0, so this issues the ioctl against vani's handle itself, with the
+# struct layout vani-core declares (AlsaSwParamsLayout). Returns 0 or a
+# negative errno.
+fn audio_set_sw_silence(dev, period_frames, buffer_frames): i64 {
+    #ifdef CYRIUS_TARGET_AGNOS
+    # agnos: the kernel owns the stream's ring and pacing — there is no
+    # SW_PARAMS surface (vani's audio_set_sw_params is a no-op there too).
+    return 0;
+    #else
+    var swp[136];
+    memset(&swp, 0, SWP_SIZE);
+    store32(&swp + SWP_PERIOD_STEP, 1);
+    store64(&swp + SWP_AVAIL_MIN, period_frames);
+    store64(&swp + SWP_XFER_ALIGN, 1);
+    store64(&swp + SWP_START_THRESHOLD, 1);
+    store64(&swp + SWP_STOP_THRESHOLD, buffer_frames);
+    store64(&swp + SWP_SILENCE_THRESHOLD, buffer_frames);
+    store64(&swp + SWP_SILENCE_SIZE, buffer_frames);
+    return syscall(SYS_IOCTL, audio_fd(dev), SNDRV_PCM_IOCTL_SW_PARAMS, &swp);
+    #endif
+}
+
+# Open the ALSA playback device in synth.cyr's format (48 kHz S16_LE stereo)
+# with the AudioDev ring. Best-effort: if the open, HW_PARAMS, or PREPARE
+# fails, the device is closed and audio_dev stays 0, so the game runs silent
+# instead of writing to an unconfigured PCM. Allocates the render buffer
+# regardless (so audio_play is safe before/without a device). Call once at
+# startup.
 fn audio_init(): i64 {
     audio_buf = alloc(SFX_MAX_BYTES);
     audio_dev = audio_open_playback(AUDIO_CARD, AUDIO_DEVICE);
-    if (audio_dev != 0) {
-        audio_set_params(audio_dev, SYNTH_RATE, 1, 8);   # rate, channels, bits
-        audio_prepare(audio_dev);
+    if (audio_dev == 0) { return 0; }
+    var r = audio_set_params_fmt(audio_dev, SYNTH_RATE, SYNTH_CHANNELS,
+      SND_PCM_FORMAT_S16_LE, AUDIO_PERIOD_FRAMES, AUDIO_BUFFER_FRAMES);
+    if (r == 0) {
+        # Best-effort: if refused, the kernel keeps its default sw params
+        # (same start/stop), just without the silence fill.
+        audio_set_sw_silence(audio_dev, AUDIO_PERIOD_FRAMES, AUDIO_BUFFER_FRAMES);
+    } else {
+        # The device refuses this ring shape: let the kernel pick period and
+        # buffer. Cues still play, but a small default ring blocks the loop
+        # on long cues, and there is no silence fill (the ring size is not
+        # known here).
+        r = audio_set_params_fmt(audio_dev, SYNTH_RATE, SYNTH_CHANNELS,
+          SND_PCM_FORMAT_S16_LE, 0, 0);
+    }
+    if (r == 0) { r = audio_prepare(audio_dev); }
+    if (r != 0) {
+        audio_close(audio_dev);
+        audio_dev = 0;
     }
     return 0;
 }
@@ -105,14 +187,24 @@ fn audio_toggle_mute(): i64 {
     return audio_muted;
 }
 
-# Play event `ev`. No-op (returns 0) when muted or with no device. Returns
-# the number of PCM bytes written otherwise. 8-bit mono => bytes == frames.
+# Play event `ev`. No-op (returns 0) when muted or with no device. Otherwise
+# returns the frames queued (0 if the device refused them). Cues queue
+# back-to-back in the ring rather than mixing: one fired while another is
+# still playing follows it.
 fn audio_play(ev): i64 {
     if (audio_muted == 1) { return 0; }
     if (audio_dev == 0) { return 0; }
     var n = sfx_render(audio_buf, ev);
-    audio_write(audio_dev, audio_buf, n);
-    return n;
+    var w = audio_write(audio_dev, audio_buf, n);
+    if (audio_write_recoverable(w) == 1) {
+        # The previous cue ran the ring dry (or the PCM was suspended):
+        # re-arm the stream and retry once, which restarts playback here.
+        if (audio_prepare(audio_dev) == 0) {
+            w = audio_write(audio_dev, audio_buf, n);
+        }
+    }
+    if (w < 0) { return 0; }
+    return w;
 }
 
 fn audio_shutdown(): i64 {

@@ -4,6 +4,87 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+**Sound actually plays.** Hardware probing on the dev box (card 1, the ALC897)
+confirmed the M4 audio path has been silent since 0.5.0, behind unchecked
+return values. The fix renders in the device's own format, keeps the stream
+recoverable between cues, and fails silent rather than broken.
+
+### Fixed
+
+- **A format the device accepts.** `audio_init` asked the raw `hw:1,0` PCM for
+  11025 Hz mono 8-bit, but the codec takes only S16_LE / S32_LE, exactly 2
+  channels, at 44.1 kHz and up, and a raw hw PCM does no conversion:
+  `HW_PARAMS` returned `-EINVAL`, and with its return unchecked every later
+  write failed silently. `synth.cyr` now renders **48 kHz S16_LE interleaved
+  stereo** (L == R), programmed via vani's explicit-format
+  `audio_set_params_fmt(…, SND_PCM_FORMAT_S16_LE, …)` — same square wave +
+  linear decay, still integer-only and deterministic; `SYNTH_AMP` 40 → 10240
+  keeps the same fraction of full scale. This also retires a latent sign bug:
+  the synth wrote *unsigned* 8-bit (silence = 128) while vani's `bits = 8`
+  programs *signed* S8.
+- **Every cue after the first.** The ring is fed only on events, so each cue
+  ends with it running dry and the kernel stops the stream (XRUN — the default
+  `stop_threshold` is the buffer size); every later write got `-EPIPE` until a
+  PREPARE nothing issued. `audio_play` now re-prepares and retries once on
+  `-EPIPE` / `-ESTRPIPE` (the policy is the pure, tested
+  `audio_write_recoverable`). On the hardware, every cue after the first takes
+  that path.
+- **No loop stalls on long cues.** Left to pick, the kernel gives this codec a
+  1024-frame (21 ms) ring, so the blocking write of the 240 ms fanfare would
+  hold the 60 fps loop ~220 ms. The ring is now explicit: 32 periods × 1024
+  frames = 32768 frames (~683 ms; HD-Audio caps periods at 32) — deeper than
+  the worst one-frame burst (quad + level-up, 18240 frames). Measured:
+  `audio_play` returns in 11–180 µs, re-prepare included.
+- **No stale-ring tails.** With 1024-frame periods the kernel notices an
+  underrun only at the next period interrupt, so after each cue the DMA played
+  up to 21 ms of whatever an earlier cue left in the ring (measured: 353
+  frames past the end of a rotate tick before the stop). `audio_init` now sets
+  sw params with `silence_threshold = silence_size = buffer`, so the kernel
+  keeps the ring past the queued audio zeroed. vani's `audio_set_sw_params`
+  pins both silence fields to 0, so `audio_set_sw_silence` issues the ioctl on
+  vani's handle with vani-core's own `AlsaSwParamsLayout` (`#ifdef`'d to a
+  no-op on agnos, where the kernel owns the ring — as vani's own is).
+- **Fail silent, never unconfigured.** `audio_init` checks HW_PARAMS and
+  PREPARE. A device that refuses the ring shape falls back to kernel-chosen
+  period / buffer (sound plays; long cues can stall the loop; no silence
+  fill); one that refuses the format — or the prepare — is closed and
+  `audio_dev` stays 0, so no write reaches an unconfigured PCM.
+
+### Changed
+
+- **Render buffer `SFX_MAX_BYTES` 4096 → 65536** (new `SFX_MAX_FRAMES` 16384),
+  sized for the longest cue at 48 kHz S16 stereo (the 320 ms top-out sting,
+  61,440 B). Still heap-allocated, so the CI gate against ≥ 64 KB stack
+  buffers is unaffected; the tests `alloc` theirs too.
+- **Frames, not bytes.** `synth_samples_for_ms` → `synth_frames_for_ms`;
+  `synth_square` / `sfx_render` offsets and counts are frames (4 bytes each),
+  the unit `audio_write` takes.
+- `audio.cyr`'s header said vani's `audio_*` symbols come from a
+  `[deps.vani]` module; they come from `vendor/vani-core.cyr`, which
+  `src/main.cyr` and the test suite include explicitly before `synth.cyr`.
+  `vendor/README.md` now lists the vani calls polyomino makes.
+
+### Verified
+
+- **Silent hardware probe** (card 1, no PCM written): `audio_set_params(11025,
+  1, 8)` → `-22`; `(48000, 2, 16)` → `0`. `HW_REFINE`: formats S16_LE + S32_LE
+  only, channels 2..2, rate 44100..192000 (22050 refused); the kernel's own
+  pick is period 32 / buffer 1024.
+- **Mechanics run** (all-zero PCM through the real `audio_init` and
+  `audio_play`'s write/recover path): negotiated 48000 / S16_LE / 2, period
+  1024, buffer 32768, silence 32768 / 32768; all 22 cues landed in full.
+- **Listening test**: _pending the console playtest._
+- `cyrius test tests/cyrius-polyomino.tcyr`: **275 / 275** (was 253; the
+  synth/audio groups went 17 → 39 assertions — 48 kHz values, S16_LE byte
+  order, L == R, amplitude bound, buffer and ring sizing, retry policy). Five
+  targeted mutations (inverted R channel, unsigned silence, byte-swapped
+  samples, a dropped `-ESTRPIPE` retry, a halved ring) each fail the suite.
+- Headless smoke: output and PPMs byte-identical to 0.5.4 over six seed /
+  frame pairs (audio is off the headless path).
+- `cyrius lint` (CI's hard-gate form, all of `src/`) and `cyrius fmt --check`:
+  clean. `CYRIUS_DCE=1`: 75,328 → 75,376 B. Builds for x86_64, `--aarch64` and
+  `--agnos` (as 0.5.4 did).
+
 ## [0.5.4] - 2026-09-26
 
 **Toolchain bump to Cyrius 6.6.6 + dependency refresh.** No source changes:
