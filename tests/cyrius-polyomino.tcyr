@@ -732,6 +732,12 @@ fn test_audio() {
     assert_eq(audio_write_recoverable(0 - 19), 0, "-ENODEV (unplugged) is not retried");
     assert_eq(audio_write_recoverable(0 - 77), 0, "-EBADFD is not retried");
 
+    # busy-device guard: a PCM that will not open without waiting probes
+    # unavailable, and audio_init then skips vani's blocking open. Busy needs
+    # hardware; absent and unencodable fail the same probe headless.
+    assert_eq(audio_probe_playback(99, 99), 0, "an absent PCM probes unavailable");
+    assert_eq(audio_probe_playback(100, 0), 0, "an unencodable card probes unavailable");
+
     # mute toggle + the no-device / muted no-op (no real /dev/snd in CI)
     assert_eq(audio_is_muted(), 0, "starts unmuted");
     assert_eq(audio_toggle_mute(), 1, "toggle mutes");

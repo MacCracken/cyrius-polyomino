@@ -25,8 +25,13 @@ Third-party single-file snapshots that are **deliberately committed** (unlike
   `audio_prepare`, `audio_write`, `audio_drain`, `audio_close`, and `audio_fd`
   plus the `SNDRV_PCM_IOCTL_SW_PARAMS` / `AlsaSwParamsLayout` constants for the
   silence-filled sw params (`audio_set_sw_silence` — vani's
-  `audio_set_sw_params` pins the silence fields to 0). A refresh must keep
-  those names. `include "vendor/vani-core.cyr"` sits before `src/synth.cyr` in
+  `audio_set_sw_params` pins the silence fields to 0), and vani's private
+  `_audio_devpath`, so the busy-device probe (`audio_probe_playback`) opens,
+  `O_NONBLOCK`, exactly the node `audio_open_playback` will. A refresh must
+  keep those names. The probe exists because vani's open is a blocking
+  `O_WRONLY` (as of 1.2.5) that sleeps on a PCM another app holds; a vani
+  whose open fails fast on a busy device makes it redundant.
+  `include "vendor/vani-core.cyr"` sits before `src/synth.cyr` in
   `src/main.cyr` and the test suite.
 
 ### Refreshing to a newer vani

@@ -27,8 +27,10 @@ bump). Hardware probing confirmed the M4 audio path was silent: the codec
 refuses 11025 Hz / mono / 8-bit (`-EINVAL`, unchecked), and every cue after
 the first hit an unrecovered XRUN. `synth.cyr` now renders 48 kHz S16_LE
 stereo; `audio.cyr` opens an explicit 32768-frame ring with silence-filled sw
-params, re-prepares on `-EPIPE`, and fails silent. Details in the CHANGELOG's
-`[Unreleased]`. Unreleased build: 75,376 B DCE, 275 assertions.
+params, re-prepares on `-EPIPE`, and fails silent. A PCM another app holds
+(PipeWire, …) is probed `O_NONBLOCK` and skipped — vani's own open would
+sleep on it and hang startup. Details in the CHANGELOG's `[Unreleased]`.
+Unreleased build: 75,376 B DCE, 277 assertions.
 
 - **DCE binary**: 75,328 B (x86_64, static, stripped) — +256 B vs 0.5.3's 75,072 B (+192 toolchain, +64 the vani null-handle guards). 0.5.1 recorded 137,032 B on 6.3.5; the DCE build was already ~75 KB by 6.6.2, so that drop predates this cut. Vendoring vani-core rather than git-resolving it avoids a ~4× blowup (488 KB) from vani's transitive tree.
 - **Tests**: 253 assertions, 0 failed (unchanged since 0.5.0's +18 for synth waveform/timing, SFX event byte counts + tone sample, mute toggle / no-device no-op, mute key decode). fmt + lint + vet clean.
@@ -69,7 +71,7 @@ I/O + progression/feel + the modern guideline layer + audio, per
 - `src/framebuf.cyr` / `src/render.cyr` — offscreen surface + flat-cell renderer (placeholder palette, ADR 0002) + **dim ghost piece** (M3) + PPM dump
 - `src/hud.cyr` — 3x5 bitmap font (cyrius-bb pattern) + side-panel HUD (score/level/lines) + **multi-piece NEXT queue + HOLD slot** (M3)
 - `src/synth.cyr` — **square-wave PCM synthesis** (48 kHz S16_LE stereo, L == R, decay envelope; pure) (M4; 8-bit mono until the unreleased audio fix)
-- `src/audio.cyr` — **SFX event→note map (`sfx_render`) + vani playback shell + mute** (M4); device half is best-effort, no-ops with no `/dev/snd`. Opens card 1 device 0 by default (`AudioDev` constants, 0.5.1) — the verified analog target, not card 0 (often no PCM). 48 kHz S16_LE stereo on an explicit 1024 × 32 = 32768-frame ring with silence-filled sw params; re-prepares on XRUN (`audio_write_recoverable`); a device that refuses the format stays closed (silent)
+- `src/audio.cyr` — **SFX event→note map (`sfx_render`) + vani playback shell + mute** (M4); device half is best-effort, no-ops with no `/dev/snd`. Opens card 1 device 0 by default (`AudioDev` constants, 0.5.1) — the verified analog target, not card 0 (often no PCM). 48 kHz S16_LE stereo on an explicit 1024 × 32 = 32768-frame ring with silence-filled sw params; re-prepares on XRUN (`audio_write_recoverable`); a device that refuses the format stays closed (silent); a busy one (held by PipeWire or any other app) is skipped by a non-blocking probe (`audio_probe_playback`) instead of blocking startup in vani's open
 - `vendor/vani-core.cyr` — **vendored vani 1.2.5 `core` profile** (ALSA `audio_*` shim); single self-contained file, see `vendor/README.md`
 - `src/input.cyr` / `src/tick.cyr` / `src/present.cyr` — raw-tty input + decoder (now incl. **hard drop = space, hold = c, mute = m**), ~60 fps pacing, geometry-probed (`FBIOGET_{V,F}SCREENINFO`) integer-scaled + centred `/dev/fb0` blit
 - `src/main.cyr` — interactive loop (tick model + DAS + hard drop + hold + HUD + **audio cues** + game-over screen + line-clear flash) + deterministic headless `<frames> [seed]` smoke
@@ -78,7 +80,7 @@ Planned: `src/save.cyr` (M5, sankoch + sigil).
 
 ## Tests
 
-- `tests/cyrius-polyomino.tcyr` — **275 assertions, 0 failed** (253 at 0.5.4): piece, board, rng (LCG + 7-bag permutation/two-bag stream), world (move/SRS rotate/gravity/clear/top-out), SRS (decode/transitions/wall+floor kick/boxed-fail), hard drop, hold, scoring (combo/B2B/T-spin), world tick, gravity curve, DAS, score helpers, render (pixels + ghost), HUD (multi-queue/HOLD/layout), **synth (48 kHz waveform / ms→frames / decay / S16_LE byte order / L == R + amplitude bound / frame offsets)**, **audio (SFX frame counts for all seven cues / render-buffer + ring sizing / tone sample / XRUN-retry policy / mute toggle / no-device no-op)**, input (key decode incl. hard drop / hold / mute). Deterministic + headless.
+- `tests/cyrius-polyomino.tcyr` — **277 assertions, 0 failed** (253 at 0.5.4): piece, board, rng (LCG + 7-bag permutation/two-bag stream), world (move/SRS rotate/gravity/clear/top-out), SRS (decode/transitions/wall+floor kick/boxed-fail), hard drop, hold, scoring (combo/B2B/T-spin), world tick, gravity curve, DAS, score helpers, render (pixels + ghost), HUD (multi-queue/HOLD/layout), **synth (48 kHz waveform / ms→frames / decay / S16_LE byte order / L == R + amplitude bound / frame offsets)**, **audio (SFX frame counts for all seven cues / render-buffer + ring sizing / tone sample / XRUN-retry policy / busy-device probe fails closed / mute toggle / no-device no-op)**, input (key decode incl. hard drop / hold / mute). Deterministic + headless.
 - `tests/cyrius-polyomino.bcyr` — benchmark stub (no-op; `include`s `lib/bench.cyr` since 6.3.x; real benches at the P(-1) pass)
 - `tests/cyrius-polyomino.fcyr` — fuzz stub
 - Playtest gate: the interactive loop + `/dev/fb0` present need a real Linux console (build/lint + headless-smoke-verified only so far).
@@ -119,7 +121,9 @@ See [`roadmap.md`](roadmap.md). Immediate sequence:
    dropped every cue after the first, the 21 ms default ring that would have
    stalled the loop on long cues, and the stale-ring tails a deeper ring
    exposes — see the CHANGELOG's `[Unreleased]`. By-ear check on the dev box:
-   _pending_.
+   _pending_. If the game is silent there, check whether something holds the
+   PCM (`/proc/asound/card1/pcm0p/sub0/status` not `closed` — e.g. PipeWire
+   playing another app's audio): a busy device is now skipped, not waited on.
 2. **M5 — high-score persistence** (v0.6.0): `src/save.cyr` — top-10 table at
    `~/.cyrius-polyomino/scores.cyb`, sankoch-compressed + sigil-hashed, with
    tamper detection and a score-entry UI on a qualifying game-over.

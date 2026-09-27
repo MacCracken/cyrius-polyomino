@@ -7,7 +7,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 **Sound actually plays.** Hardware probing on the dev box (card 1, the ALC897)
 confirmed the M4 audio path has been silent since 0.5.0, behind unchecked
 return values. The fix renders in the device's own format, keeps the stream
-recoverable between cues, and fails silent rather than broken.
+recoverable between cues, and fails silent rather than broken — or hung.
 
 ### Fixed
 
@@ -49,6 +49,19 @@ recoverable between cues, and fails silent rather than broken.
   period / buffer (sound plays; long cues can stall the loop; no silence
   fill); one that refuses the format — or the prepare — is closed and
   `audio_dev` stays 0, so no write reaches an unconfigured PCM.
+- **No startup hang on a busy device.** vani's `audio_open_playback` opens the
+  PCM `O_WRONLY` without `O_NONBLOCK`, and the kernel's `snd_pcm_open` answers
+  a busy PCM by sleeping until the holder closes it. Card 1's analog PCM has
+  one subdevice, so any holder made it busy — PipeWire / wireplumber (which
+  get the device ACL with the console session) or any other app — and the
+  game hung before its first frame instead of running silent. `audio_init`
+  now probes first: `audio_probe_playback` opens the same node (built by
+  vani's own `_audio_devpath`) `O_WRONLY | O_NONBLOCK`, which fails at once
+  with `-EBUSY`, then closes it; any failure (`-EBUSY`, `-ENOENT`, `-EACCES`)
+  leaves `audio_dev` 0 before vani's blocking open is reached. vani cannot
+  adopt an fd, so it reopens the node: a device grabbed in that window can
+  still block the open — an accepted race. On agnos the probe always passes
+  (`#ifdef`'d): vani claims a kernel stream slot there, not an ALSA node.
 
 ### Changed
 
@@ -73,14 +86,27 @@ recoverable between cues, and fails silent rather than broken.
 - **Mechanics run** (all-zero PCM through the real `audio_init` and
   `audio_play`'s write/recover path): negotiated 48000 / S16_LE / 2, period
   1024, buffer 32768, silence 32768 / 32768; all 22 cues landed in full.
+- **Busy-device check** (card 1, kernel 7.2.6; a holder process keeps the
+  PCM open, unconfigured — `subdevices_avail: 0`; silent, the harness writes
+  only all-zero PCM): without the probe, `audio_init` never returned — killed
+  after 5 s, still blocked in `snd_pcm_open` on `open(…, O_WRONLY)`. With it,
+  `audio_init` returned in 6 µs with `audio_dev == 0` (the probe's open got
+  `-EBUSY`). Holder gone: the device opens, and a 576-frame write lands, as
+  before. The probe's extra open costs nothing measurable: `audio_init` on a
+  free, warm device is 116–129 µs without it and 117–133 µs with it.
 - **Listening test**: _pending the console playtest._
-- `cyrius test tests/cyrius-polyomino.tcyr`: **275 / 275** (was 253; the
-  synth/audio groups went 17 → 39 assertions — 48 kHz values, S16_LE byte
-  order, L == R, amplitude bound, buffer and ring sizing, retry policy). Five
+- `cyrius test tests/cyrius-polyomino.tcyr`: **277 / 277** (was 253; the
+  synth/audio groups went 17 → 41 assertions — 48 kHz values, S16_LE byte
+  order, L == R, amplitude bound, buffer and ring sizing, retry policy, and
+  the probe failing closed on an absent PCM or an unencodable card). Five
   targeted mutations (inverted R channel, unsigned silence, byte-swapped
-  samples, a dropped `-ESTRPIPE` retry, a halved ring) each fail the suite.
+  samples, a dropped `-ESTRPIPE` retry, a halved ring) each fail the suite,
+  as do an inverted probe fd check and an always-free probe. Dropping
+  `O_NONBLOCK` from the probe passes it — a busy PCM needs hardware, so the
+  busy-device check above is that property's gate.
 - Headless smoke: output and PPMs byte-identical to 0.5.4 over six seed /
-  frame pairs (audio is off the headless path).
+  frame pairs (audio is off the headless path), and to the pre-probe tree
+  over four more.
 - `cyrius lint` (CI's hard-gate form, all of `src/`) and `cyrius fmt --check`:
   clean. `CYRIUS_DCE=1`: 75,328 → 75,376 B. Builds for x86_64, `--aarch64` and
   `--agnos` (as 0.5.4 did).

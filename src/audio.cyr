@@ -7,10 +7,10 @@
 #      Deterministic + headless-testable.
 #   2. The device shell (`audio_init` / `audio_play` / `audio_shutdown`)
 #      routes that buffer to the ALSA playback device via vani's `audio_*`
-#      PCM API. Best-effort: with no sound card (CI / no /dev/snd), or a
-#      device that refuses the format, `audio_dev` stays 0 and `audio_play`
-#      is a silent no-op — the game runs unchanged. A mute toggle
-#      short-circuits playback too.
+#      PCM API. Best-effort: with no sound card (CI / no /dev/snd), a device
+#      another app holds open, or one that refuses the format, `audio_dev`
+#      stays 0 and `audio_play` is a silent no-op — the game runs unchanged.
+#      A mute toggle short-circuits playback too.
 #
 # Requires (include order): vendor/vani-core.cyr, synth.cyr — then this.
 # vani's `audio_*` API and ALSA constants come from vendor/vani-core.cyr (the
@@ -147,14 +147,42 @@ fn audio_set_sw_silence(dev, period_frames, buffer_frames): i64 {
     #endif
 }
 
+# Whether the playback PCM (card, device) opens right now without waiting:
+# 1 if so, 0 if not. vani's audio_open_playback opens O_WRONLY without
+# O_NONBLOCK, and the kernel's snd_pcm_open answers a busy PCM (every
+# subdevice held — the analog PCM has just one — by PipeWire, wireplumber,
+# or any other app) by sleeping until a holder lets go — the game would hang
+# at startup instead of running silent. The same open with O_NONBLOCK fails at once with -EBUSY; a
+# missing node (-ENOENT) or no device ACL (-EACCES) fails either way. The
+# path comes from vani's own _audio_devpath, so this opens exactly the node
+# vani will. vani cannot adopt an fd, so the probe's is closed and vani
+# opens the node again: a device grabbed in between still blocks that open,
+# an accepted race.
+fn audio_probe_playback(card, device): i64 {
+    #ifdef CYRIUS_TARGET_AGNOS
+    # agnos: there is no /dev/snd node — vani claims a kernel stream slot
+    # (sys_snd_open) instead, so there is no ALSA open to probe.
+    return 1;
+    #else
+    var path = _audio_devpath(card, device, 112);    # 'p' = playback
+    if (path == 0) { return 0; }
+    var fd = sys_open(path, O_WRONLY | O_NONBLOCK, 0);
+    if (fd < 0) { return 0; }
+    sys_close(fd);
+    return 1;
+    #endif
+}
+
 # Open the ALSA playback device in synth.cyr's format (48 kHz S16_LE stereo)
-# with the AudioDev ring. Best-effort: if the open, HW_PARAMS, or PREPARE
-# fails, the device is closed and audio_dev stays 0, so the game runs silent
-# instead of writing to an unconfigured PCM. Allocates the render buffer
-# regardless (so audio_play is safe before/without a device). Call once at
-# startup.
+# with the AudioDev ring. Best-effort: a device that is busy or absent is
+# skipped without waiting (audio_probe_playback), and if the open, HW_PARAMS,
+# or PREPARE fails, the device is closed; either way audio_dev stays 0, so
+# the game runs silent instead of hanging or writing to an unconfigured PCM.
+# Allocates the render buffer regardless (so audio_play is safe
+# before/without a device). Call once at startup.
 fn audio_init(): i64 {
     audio_buf = alloc(SFX_MAX_BYTES);
+    if (audio_probe_playback(AUDIO_CARD, AUDIO_DEVICE) == 0) { return 0; }
     audio_dev = audio_open_playback(AUDIO_CARD, AUDIO_DEVICE);
     if (audio_dev == 0) { return 0; }
     var r = audio_set_params_fmt(audio_dev, SYNTH_RATE, SYNTH_CHANNELS,
