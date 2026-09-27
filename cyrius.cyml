@@ -5,7 +5,7 @@ description = "An original falling-block puzzle in Cyrius — generic homage to 
 license = "GPL-3.0-only"
 repository = "https://github.com/MacCracken/cyrius-polyomino"
 language = "cyrius"
-cyrius = "6.6.2"
+cyrius = "6.6.6"
 
 [build]
 entry = "src/main.cyr"
@@ -23,19 +23,23 @@ stdlib = ["string", "alloc", "fmt", "io", "fs", "str", "vec", "syscalls", "args"
 # git dependency. Reason: resolving vani as a git dep drags in its whole
 # manifest tree (patra ~160KB + yukti ~211KB + sakshi), which DCE does not
 # prune from vendored modules — it bloated the binary ~4x (488KB vs 136KB).
-# vani-core only needs syscalls, so the vendored copy builds clean against the
-# stdlib above. See vendor/README.md for provenance + how to refresh it.
+# vani-core only needs syscalls / string / alloc, so the vendored copy builds
+# clean against the stdlib above. See vendor/README.md for provenance + how to
+# refresh it.
 
 # Earmarked external deps — dormant until their milestone, kept commented so
 # the build stays warning-free (an unused dep just adds link warnings + weight).
 #
 # sankoch — high-score file compression (M5). sigil — high-score integrity hash (M5).
+# Tags track each repo's latest release. The pinned toolchain's stdlib also
+# bundles both (6.6.6: sankoch 2.8.0, sigil 3.12.18) — an alternative to the
+# git deps; weigh the link weight of each when M5 wires them.
 # [deps.sankoch]
 # git = "https://github.com/MacCracken/sankoch.git"
-# tag = "2.1.0"
+# tag = "2.8.0"
 # modules = ["dist/sankoch.cyr"]
 #
 # [deps.sigil]
 # git = "https://github.com/MacCracken/sigil.git"
-# tag = "2.9.3"
+# tag = "3.13.2"
 # modules = ["dist/sigil.cyr"]

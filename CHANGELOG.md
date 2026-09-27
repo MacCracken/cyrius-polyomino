@@ -4,6 +4,59 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.4] - 2026-09-26
+
+**Toolchain bump to Cyrius 6.6.6 + dependency refresh.** No source changes:
+the game plays exactly as 0.5.3 did, which the cross-toolchain determinism
+fingerprints below confirm. (0.6.0 stays reserved for the M5 high-score
+milestone.)
+
+### Changed
+
+- **Cyrius pin `6.6.2` → `6.6.6`.** `lib/` and `cyrius.lock` regenerated from a
+  clean `rm -rf lib` + `cyrius deps` — 27 files, `deps --verify` 27 / 0. 6.6.6
+  writes the lock sorted with a `cyrius 6.6.6` toolchain trailer, drops the stale
+  `sakshi` / `yukti` / `patra` / `vani-core` rows left from 0.5.0's short-lived
+  `[deps.vani]` git dep, and adds `alloc_cx.cyr` (the allocator peer for the new
+  cx bytecode target). No source edits needed. The nested-loop `continue`
+  miscompile fixed in 6.6.3 (and the one `for > while > for` shape 6.6.6 still
+  gets wrong) cannot reach polyomino: its only `continue` is in `input_poll`'s
+  single, un-nested `while`.
+- **Re-vendored `vani-core` `0.9.9` → `1.2.5`** (`vendor/vani-core.cyr`) — vani's
+  latest release, and the one the 6.6.6 stdlib bundles. For the six `audio_*`
+  calls polyomino makes it is hardening only: null-handle guards, an idempotent
+  `audio_close`, UAPI-correct `HW_PARAM` numbering (never reached the wire —
+  every use site subtracts the same base), and an S24_LE frame-stride fix
+  (polyomino writes 8-bit, so bytes == frames still). `audio_open_playback`
+  still returns 0 on failure. vani 1.2.3's Result value-form break is confined
+  to the `vani_*` layer, which polyomino never calls. The core profile now needs
+  only `syscalls` / `string` / `alloc` from the stdlib.
+- **Earmarked M5 deps re-pointed at their latest releases** (still commented
+  out): `sankoch` `2.1.0` → `2.8.0`, `sigil` `2.9.3` → `3.13.2`. The manifest
+  now notes that the 6.6.6 stdlib also bundles both (sankoch 2.8.0, sigil
+  3.12.18) as an alternative for M5 to weigh.
+- `docs/development/state.md` refreshed (it had stalled at 0.5.1);
+  `vendor/README.md` provenance updated.
+
+### Verified
+
+- `cyrius build`: clean, no warnings. `CYRIUS_DCE=1`: **75,328 B** x86_64 static
+  ELF (0.5.3 on 6.6.2: 75,072 B — +192 B toolchain, +64 B vani guards). Plain
+  build 144,704 → 153,152 B.
+- `cyrius test tests/cyrius-polyomino.tcyr`: **253 / 253**.
+- **Determinism across the bump:** the headless smoke (`<frames> [seed]`) over
+  8 seed/frame combinations prints identical score / lines / level / state /
+  cells and writes byte-identical PPMs under 6.6.2 + vani 0.9.9 and 6.6.6 +
+  vani 1.2.5, in plain and DCE builds alike.
+- `cyrius lint` (CI's hard-gate form, all of `src/`) and `cyrius fmt --check`
+  (src, tests, benches): clean. `cyrius vet`: 17 deps, 0 missing.
+- Bench + fuzz stub build and run. Bench over 3 interleaved pairs, same machine:
+  `piece_word` 22–23 → 24 ns and `board_collides` 49 → 51 ns (consistent in
+  every pair, so a real compiler-side cost — the source is unchanged);
+  `board_clear_lines` (~177 ns) and `render_world` (~381 µs/frame) are flat
+  within noise. `scripts/bench-history.sh` still parses 6.6.6's bench output
+  (the new `[per op in ps …]` sub-lines don't match its grep).
+
 ## [0.5.3] - 2026-09-11
 
 ### Changed

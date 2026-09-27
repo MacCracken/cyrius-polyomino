@@ -7,7 +7,12 @@ Third-party single-file snapshots that are **deliberately committed** (unlike
 
 - **Source**: [vani](https://github.com/MacCracken/vani) `dist/vani-core.cyr`
   (the `core` profile — the playback-only ALSA PCM shim: the `audio_*` API).
-- **Version**: 0.9.6 (pins cyrius 6.3.5; we build on 6.2.2).
+- **Version**: 1.2.5 (pins cyrius 6.6.2; we build on 6.6.6) — byte-identical to
+  vani's committed `dist/vani-core.cyr` at tag `1.2.5` (sha256 `28a8c870…`), the
+  release the 6.6.6 stdlib bundles as `lib/vani.cyr` (full profile). The six
+  `audio_*` calls polyomino makes keep their signatures and plain-`i64` returns,
+  and `audio_open_playback` still returns 0 on failure; vani 1.2.3's Result
+  value-form break touches only the `vani_*` layer, which polyomino never calls.
 - **Why vendored instead of a `[deps.vani]` git dependency**: resolving vani
   as a git dep pulls its entire manifest tree (patra ~160 KB, yukti ~211 KB,
   sakshi) into `lib/` and links it — DCE does not prune whole vendored
