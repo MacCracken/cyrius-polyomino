@@ -17,10 +17,9 @@
 # replay / speedrun invariant; see CLAUDE.md). The LCG state (WO_RNG) is
 # advanced only when a fresh bag is generated.
 #
-# Heap struct, 16 x i64. The trailing four i64 are real-time timing state
-# (gravity / lock-delay counters + the last lock's clear count) used by the
-# frame-tick model (world_tick); the deterministic mutators above them are
-# timing-free and unchanged.
+# Heap struct of i64 fields (WorldField). The WO_GRAV_TIMER / WO_LOCK_* fields
+# are the real-time gravity and lock-delay state used by the frame-tick model
+# (world_tick).
 
 enum WorldState {
     WS_PLAYING = 0;
@@ -51,7 +50,9 @@ enum WorldField {
     WO_B2B = 160;           # back-to-back chain active (last clear was difficult)
     WO_COMBO = 168;         # consecutive line-clear chain (-1 = none, 0 = first clear)
     WO_LAST_TSPIN = 176;    # T-spin kind of the most recent lock (0/1/2; HUD/fx)
-    WO_SIZE = 184;
+    WO_LOCK_LOW = 184;      # lowest origin row this piece has reached
+    WO_LOCK_TOUCHED = 192;  # 1 once the piece has touched down at that row
+    WO_SIZE = 200;
 }
 
 # Upcoming-piece queue sizing. A refill appends a whole 7-bag, so the live
@@ -164,6 +165,8 @@ fn world_place(wd, t): i64 {
     store64(wd + WO_GRAV_TIMER, 0);     # fresh piece -> fresh fall/lock timing
     store64(wd + WO_LOCK_TIMER, 0);
     store64(wd + WO_LOCK_RESETS, 0);
+    store64(wd + WO_LOCK_LOW, SPAWN_Y);
+    store64(wd + WO_LOCK_TOUCHED, 0);
     store64(wd + WO_LAST_ROT, 0);       # a spawn is not a rotation
     store64(wd + WO_LAST_KICK, 0);
     var b = load64(wd + WO_BOARD);
@@ -197,7 +200,7 @@ fn world_hold(wd): i64 {
     return 1;
 }
 
-# New game on board `b`, RNG seeded with `seed` (pass a non-zero seed).
+# New game on board `b`, RNG seeded with `seed` (any value).
 fn world_new(b, seed): i64 {
     var wd = alloc(WO_SIZE);
     store64(wd + WO_BOARD, b);
@@ -248,13 +251,35 @@ fn world_ghost_y(wd): i64 {
     return y;
 }
 
-# Lock-delay reset: a successful move/rotate while grounded restarts the
-# lock timer, but only LOCK_MAX_RESETS times per landing — so sliding /
-# spinning buys a little time without stalling the piece forever (the
-# bounded-"infinity" guideline behaviour). No-op while airborne (the tick
-# zeroes the lock state then anyway).
+# Lock delay follows the guideline's bounded "extended placement": a move or
+# rotate restarts the lock timer at most LOCK_MAX_RESETS times, and only
+# reaching a new lowest row refills that budget. Refilling on every landing
+# would let a piece kick back up and fall onto the same row forever.
+
+# Note a touchdown if the piece is resting on something right now. From then
+# until it reaches a new lowest row, every move or rotate spends budget.
+fn world_lock_touch(wd): i64 {
+    if (world_grounded(wd) == 1) { store64(wd + WO_LOCK_TOUCHED, 1); }
+    return 0;
+}
+
+# The piece just moved down: a new lowest row restarts the timer and budget.
+fn world_lock_refill(wd): i64 {
+    var y = load64(wd + WO_CUR_Y);
+    if (y > load64(wd + WO_LOCK_LOW)) {
+        store64(wd + WO_LOCK_LOW, y);
+        store64(wd + WO_LOCK_TIMER, 0);
+        store64(wd + WO_LOCK_RESETS, 0);
+        store64(wd + WO_LOCK_TOUCHED, 0);
+    }
+    return 0;
+}
+
+# Spend one reset on a successful move/rotate. Free until the piece has
+# touched down at its lowest row, so maneuvering in the air costs nothing.
 fn world_lock_reset(wd): i64 {
-    if (world_grounded(wd) == 1) {
+    world_lock_touch(wd);
+    if (load64(wd + WO_LOCK_TOUCHED) == 1) {
         if (load64(wd + WO_LOCK_RESETS) < LOCK_MAX_RESETS) {
             store64(wd + WO_LOCK_TIMER, 0);
             store64(wd + WO_LOCK_RESETS, load64(wd + WO_LOCK_RESETS) + 1);
@@ -270,6 +295,7 @@ fn world_move(wd, dcol): i64 {
     var word = piece_word(load64(wd + WO_CUR_TYPE), load64(wd + WO_CUR_ROT));
     var nx = load64(wd + WO_CUR_X) + dcol;
     if (board_collides(b, word, nx, load64(wd + WO_CUR_Y)) == 0) {
+        world_lock_touch(wd);             # sliding off a ledge still spends budget
         store64(wd + WO_CUR_X, nx);
         store64(wd + WO_LAST_ROT, 0);     # a shift clears the T-spin precondition
         world_lock_reset(wd);
@@ -298,11 +324,13 @@ fn world_rotate(wd, dir): i64 {
         var kx = ox + srs_dx(kicks, i);
         var ky = oy + srs_dy(kicks, i);
         if (board_collides(b, word, kx, ky) == 0) {
+            world_lock_touch(wd);             # kicking off the stack still spends budget
             store64(wd + WO_CUR_ROT, nr);
             store64(wd + WO_CUR_X, kx);
             store64(wd + WO_CUR_Y, ky);
             store64(wd + WO_LAST_ROT, 1);     # rotation is the T-spin precondition
             store64(wd + WO_LAST_KICK, i);    # which kick test fitted (T-spin mini/proper)
+            world_lock_refill(wd);            # a downward kick can reach a new lowest row
             world_lock_reset(wd);
             return 1;
         }
@@ -342,11 +370,18 @@ fn world_tspin_kind(wd): i64 {
 
 # Lock the active piece, clear any full lines, apply the full guideline
 # scoring (T-spin base, back-to-back, combo), advance the level, and spawn
-# the next piece. Returns the number of lines cleared.
+# the next piece. A piece that locks wholly above the well ends the game
+# (guideline "lock out"). Returns the number of lines cleared.
 fn world_lock_sequence(wd): i64 {
     var b = load64(wd + WO_BOARD);
     var kind = world_tspin_kind(wd);
-    board_lock(b, load64(wd + WO_CUR_TYPE), load64(wd + WO_CUR_ROT), load64(wd + WO_CUR_X), load64(wd + WO_CUR_Y));
+    var t = load64(wd + WO_CUR_TYPE);
+    var rot = load64(wd + WO_CUR_ROT);
+    var stored = board_lock(b, t, rot, load64(wd + WO_CUR_X), load64(wd + WO_CUR_Y));
+    if (stored == 0) {
+        store64(wd + WO_STATE, WS_GAME_OVER);
+        return 0;
+    }
     var cleared = board_clear_lines(b);
     var level = load64(wd + WO_LEVEL);
 
@@ -384,22 +419,6 @@ fn world_gravity(wd): i64 {
     var ny = load64(wd + WO_CUR_Y) + 1;
     if (board_collides(b, word, load64(wd + WO_CUR_X), ny) == 0) {
         store64(wd + WO_CUR_Y, ny);
-        store64(wd + WO_LAST_ROT, 0);     # falling clears the T-spin precondition
-        return 0;
-    }
-    return world_lock_sequence(wd);
-}
-
-# Player-driven soft drop: like gravity, but a successful drop scores one
-# point (guideline soft-drop bonus). Returns lines cleared on a lock.
-fn world_soft_drop(wd): i64 {
-    if (load64(wd + WO_STATE) != WS_PLAYING) { return 0; }
-    var b = load64(wd + WO_BOARD);
-    var word = piece_word(load64(wd + WO_CUR_TYPE), load64(wd + WO_CUR_ROT));
-    var ny = load64(wd + WO_CUR_Y) + 1;
-    if (board_collides(b, word, load64(wd + WO_CUR_X), ny) == 0) {
-        store64(wd + WO_CUR_Y, ny);
-        store64(wd + WO_SCORE, load64(wd + WO_SCORE) + 1);
         store64(wd + WO_LAST_ROT, 0);     # falling clears the T-spin precondition
         return 0;
     }
@@ -448,6 +467,7 @@ fn world_tick(wd, soft): i64 {
     if (world_grounded(wd) == 1) {
         # Resting on the stack/floor: gravity idles, the lock timer runs.
         store64(wd + WO_GRAV_TIMER, 0);
+        store64(wd + WO_LOCK_TOUCHED, 1);
         var lt = load64(wd + WO_LOCK_TIMER) + 1;
         store64(wd + WO_LOCK_TIMER, lt);
         if (lt >= LOCK_DELAY_FRAMES) {
@@ -455,9 +475,8 @@ fn world_tick(wd, soft): i64 {
         }
         return 0;
     }
-    # Airborne: the lock state is moot until it lands again.
-    store64(wd + WO_LOCK_TIMER, 0);
-    store64(wd + WO_LOCK_RESETS, 0);
+    # Airborne: gravity runs and the lock timer pauses (world_lock_refill
+    # clears it only on a new lowest row).
     var interval = gravity_frames(load64(wd + WO_LEVEL));
     if (soft == 1) {
         if (SOFT_DROP_FRAMES < interval) { interval = SOFT_DROP_FRAMES; }
@@ -472,5 +491,11 @@ fn world_tick(wd, soft): i64 {
     store64(wd + WO_CUR_Y, load64(wd + WO_CUR_Y) + 1);
     store64(wd + WO_LAST_ROT, 0);     # falling clears the T-spin precondition
     if (soft == 1) { store64(wd + WO_SCORE, load64(wd + WO_SCORE) + 1); }
+    world_lock_refill(wd);
+    # Budget spent and back on a row it already rested on: commit on landing,
+    # so rotating off the surface every frame cannot dodge the grounded timer.
+    if (load64(wd + WO_LOCK_RESETS) >= LOCK_MAX_RESETS) {
+        if (world_grounded(wd) == 1) { return world_lock_sequence(wd); }
+    }
     return 0;
 }

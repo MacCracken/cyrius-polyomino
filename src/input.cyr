@@ -2,16 +2,16 @@
 #
 # Non-canonical, non-blocking stdin (termios via ioctl, VMIN=0/VTIME=0).
 # `input_poll()` reads the bytes available this frame and returns a bitmask
-# of game actions. `poly_key_action()` is the pure single-byte decoder
-# (unit-tested); arrow-key escape sequences (ESC [ A/B/C/D) are decoded in
-# the poll loop. Pattern mirrors cyrius-bb / cyrius-doom src/input.cyr.
+# of game actions. `poly_key_action()` and `input_decode()` are the pure
+# decoders (unit-tested), the second handling arrow-key escape sequences
+# (ESC [ A/B/C/D). Pattern mirrors cyrius-bb / cyrius-doom src/input.cyr.
 #
 # The raw-tty I/O is not unit-tested (CI has no controlling terminal) —
-# only the pure decoder is. Requires `memcpy` from stdlib.
+# only the pure decoders are. Requires `memcpy` from stdlib.
 #
 # Controls: a / left-arrow = move left, d / right = move right,
 # s / down = soft drop, w / up = rotate CW, z = rotate CCW,
-# space = hard drop, c = hold, m = mute, q / ESC = quit.
+# space = hard drop, c = hold, m = mute, q / ESC / Ctrl-C = quit.
 
 enum InputAction {
     ACT_LEFT = 1;
@@ -30,6 +30,11 @@ enum TermConst {
     TCSETS = 0x5402;
 }
 
+enum InputConst {
+    INPUT_READ_BYTES = 32;          # most bytes one poll reads
+    INPUT_WAIT_GRACE_FRAMES = 45;   # frames a key wait ignores input for (~0.75 s)
+}
+
 var orig_termios[64];
 var raw_active = 0;
 
@@ -44,6 +49,7 @@ fn poly_key_action(ch): i64 {
     if (ch == 99) { return ACT_HOLD; }      # 'c'
     if (ch == 109) { return ACT_MUTE; }     # 'm'
     if (ch == 113) { return ACT_QUIT; }     # 'q'
+    if (ch == 3) { return ACT_QUIT; }       # Ctrl-C (ISIG is off, so it arrives as a byte)
     return 0;
 }
 
@@ -68,10 +74,13 @@ fn input_init(): i64 {
     # blocking (VMIN=1), so the loop only advances on a keypress.
     store8(&raw + 23, 0); # c_cc[VMIN]
     store8(&raw + 22, 0); # c_cc[VTIME]
-    syscall(16, 0, TCSETS, &raw);
+    if (syscall(16, 0, TCSETS, &raw) < 0) { return 0 - 1; }
     raw_active = 1;
     return 0;
 }
+
+# Whether input_init put a terminal in raw mode (1), or there is none (0).
+fn input_is_raw(): i64 { return raw_active; }
 
 # Restore the terminal modes input_init saved. No-op if raw mode is not active.
 fn input_shutdown(): i64 {
@@ -82,41 +91,79 @@ fn input_shutdown(): i64 {
     return 0;
 }
 
-# Read all bytes available this frame; return the OR of action bits.
-# Non-blocking: returns 0 immediately when nothing is waiting. Arrow keys:
-# ESC [ A = up (rotate CW), B = down (soft), C = right, D = left.
-fn input_poll(): i64 {
-    var buf[32];
-    var n = syscall(0, 0, &buf, 32);
-    if (n <= 0) { return 0; }
+# Decode `n` raw tty bytes into the OR of their action bits. Pure. Arrow keys:
+# ESC [ A = up (rotate CW), B = down (soft), C = right, D = left. A lone ESC
+# is the quit key, but a read can end partway through an arrow sequence, so
+# that must not quit: an ESC [ at the end of the bytes is ignored, as is a
+# final ESC when the read filled the buffer and more is waiting. The rest of
+# a split sequence arrives next poll as bytes that map to no action.
+fn input_decode(buf, n): i64 {
     var act = 0;
     var pos = 0;
     var ch = 0;
-    var s1 = 0;
     var s2 = 0;
     while (pos < n) {
-        ch = load8(&buf + pos);
-        if (ch == 27) {
-            s1 = 0;
-            s2 = 0;
-            if (pos + 2 < n) {
-                s1 = load8(&buf + pos + 1);
-                s2 = load8(&buf + pos + 2);
-            }
-            if (s1 == 91) {
-                if (s2 == 65) { act = act | ACT_ROT_CW; }
-                if (s2 == 66) { act = act | ACT_SOFT; }
-                if (s2 == 67) { act = act | ACT_RIGHT; }
-                if (s2 == 68) { act = act | ACT_LEFT; }
-                pos = pos + 3;
-                continue;
-            }
-            act = act | ACT_QUIT;
-            pos = pos + 1;
-        } else {
+        ch = load8(buf + pos);
+        if (ch != 27) {
             act = act | poly_key_action(ch);
             pos = pos + 1;
+            continue;
         }
+        if (pos + 1 == n) {
+            if (n < INPUT_READ_BYTES) { act = act | ACT_QUIT; }
+            return act;
+        }
+        if (load8(buf + pos + 1) != 91) {
+            act = act | ACT_QUIT;
+            pos = pos + 1;
+            continue;
+        }
+        if (pos + 2 == n) { return act; }
+        s2 = load8(buf + pos + 2);
+        if (s2 == 65) { act = act | ACT_ROT_CW; }
+        if (s2 == 66) { act = act | ACT_SOFT; }
+        if (s2 == 67) { act = act | ACT_RIGHT; }
+        if (s2 == 68) { act = act | ACT_LEFT; }
+        pos = pos + 3;
     }
     return act;
+}
+
+# Read all bytes available this frame; return the OR of action bits.
+# Non-blocking: returns 0 immediately when nothing is waiting.
+fn input_poll(): i64 {
+    var buf[INPUT_READ_BYTES];
+    var n = syscall(0, 0, &buf, INPUT_READ_BYTES);
+    if (n <= 0) { return 0; }
+    return input_decode(&buf, n);
+}
+
+# Has a wait for a key finished? `frame` is how many frames have been waited
+# and `act` the keys seen on the latest. Keys inside the grace window are
+# ignored, so a key still held from play cannot end the wait at once. Pure.
+fn input_wait_done(frame, act): i64 {
+    if (frame < INPUT_WAIT_GRACE_FRAMES) { return 0; }
+    if (act == 0) { return 0; }
+    return 1;
+}
+
+# Is command-line text `s` a plain decimal integer of at most 18 digits, with
+# a leading '-' allowed when `allow_neg` is 1? atoi reads anything else as a
+# number anyway (non-numeric text as 0) and wraps past 64 bits. Pure.
+fn input_arg_is_int(s, allow_neg): i64 {
+    var i = 0;
+    if (allow_neg == 1) {
+        if (load8(s) == 45) { i = 1; }
+    }
+    var start = i;
+    var c = load8(s + i);
+    while (c != 0) {
+        if (c < 48) { return 0; }
+        if (c > 57) { return 0; }
+        i = i + 1;
+        c = load8(s + i);
+    }
+    if (i == start) { return 0; }
+    if ((i - start) > 18) { return 0; }
+    return 1;
 }

@@ -5,13 +5,16 @@
 
 ## Version
 
-**0.6.1 — toolchain bump to Cyrius 6.7.18 + every public function documented**
-(cut 2026-11-08). Pins Cyrius `6.7.9 → 6.7.18` (`lib/` + `cyrius.lock`
-regenerated clean) and moves the earmarked M5 deps to their latest releases
-(sankoch 2.8.9, sigil 3.13.15, also what 6.7.18 bundles); vani-core was already
-latest at 1.2.10. The source gained 81 doc comments and no code, and
-`cyrius audit` now exits 0. Game behaviour is unchanged — the headless smoke's
-output and PPMs are byte-identical across the bump. (Prior: 0.6.0 — Cyrius
+**0.6.2 — code audit and repair sweep** (cut 2026-11-08). The whole codebase
+read against the project's rules and the documented mechanics, with each defect
+reproduced before it was fixed: see the
+[2026-11-08 audit](../audit/2026-11-08-audit.md). Lock delay is now properly
+bounded and a piece locking wholly above the well ends the game; a split arrow
+sequence no longer quits; the aarch64 seed and framebuffer seek are fixed; the
+game-over wait, argument handling and PPM dump are corrected. No toolchain or
+dependency changes. The headless smoke's output and PPMs are byte-identical.
+(Prior: 0.6.1 — Cyrius 6.7.9 → 6.7.18 + every public function documented,
+2026-11-08; 0.6.0 — Cyrius
 6.6.20 → 6.7.9 + dependency refresh, taking the number M5 had reserved (M5 is
 now v0.7.0), 2026-11-08; 0.5.5 — audio fix, the M4 path had been silent (now 48 kHz S16_LE stereo on an
 explicit 32768-frame ring, silent rather than hung on a busy or refusing
@@ -25,12 +28,12 @@ cues routed to ALSA via vani's `audio_*` shim, vani **vendored** as a single
 file (`vendor/vani-core.cyr`, `core` profile) to avoid the ~4× git-tree bloat;
 0.4.0 — M3 modern guideline layer; 0.3.0 — M2 progression; 0.2.2/0.2.1 —
 input/geometry fixes; 0.2.0 — M1 playable core; 0.1.0 — scaffold.) The version
-files are bumped to 0.6.1; the git tag is the user's to create.
+files are bumped to 0.6.2; the git tag is the user's to create.
 
-- **DCE binary**: 80,832 B (x86_64, static, stripped), +24 B vs 0.6.0's 80,808 B. Plain build 179,136 B (0.6.0: 175,016 B). Vendoring vani-core rather than git-resolving it avoids a ~4× blowup (488 KB) from vani's transitive tree.
-- **Tests**: 277 assertions, 0 failed (253 at 0.5.4; the audio fix added 24). fmt + lint + vet clean, and `cyrius audit` exits 0 across fmt, lint, docs (0 undocumented public fns), tests and bench. CI does not run the audit, so a new public fn needs its comment on the line directly above `fn` by hand.
-- **Benchmarks** (6.7.18): piece_word 24–25ns · board_collides 52–53ns · board_clear_lines 182–184ns · render_world 387–392µs/frame. Flat against 6.7.9 across four interleaved pairs (both ran a few percent slower than at the 0.6.0 cut, so compare within a session). `bench-history.csv` last recorded 0.2.0; M4 audio is off the render hot path.
-- **Security**: P(-1) audit clean — 0 CRIT/HIGH/MED, 2 LOW fixed ([2026-05-26 audit](../audit/2026-05-26-audit.md)). M4 adds no external input surface (synth is pure; vani-core opens `/dev/snd` read-of-caps only on a real device).
+- **DCE binary**: 81,096 B (x86_64, static, stripped), +264 B vs 0.6.1's 80,832 B. Plain build 183,496 B (0.6.1: 179,136 B). Vendoring vani-core rather than git-resolving it avoids a ~4× blowup (488 KB) from vani's transitive tree.
+- **Tests**: 340 assertions, 0 failed (277 at 0.6.1), and a real fuzz sweep. fmt + lint + vet clean, and `cyrius audit` exits 0 across fmt, lint, docs (0 undocumented public fns), tests and bench; CI now runs it, so a new public fn needs its comment on the line directly above `fn`.
+- **Benchmarks** (6.7.18): piece_word 24ns · board_collides 49–51ns · board_clear_lines 171–177ns · render_world 368–377µs/frame. Flat against 0.6.1 across four interleaved pairs. `bench-history.csv` recorded at 0.6.2; M4 audio is off the render hot path.
+- **Security**: latest audit 0 CRIT/HIGH, 3 MED + 9 LOW, all fixed ([2026-11-08 audit](../audit/2026-11-08-audit.md)); earlier P(-1) pass [2026-05-26](../audit/2026-05-26-audit.md). M4 adds no external input surface (synth is pure; vani-core opens `/dev/snd` read-of-caps only on a real device).
 - **Deps**: bare stdlib (ten modules) + **vani-core 1.2.10 vendored** at `vendor/vani-core.cyr` (audio). sankoch / sigil re-wire at M5.
 - **Caveat**: the interactive loop + `/dev/fb0` present are confirmed running
   live on a real console (0.2.2). The M2/M3 *feel* layers and the M4 *audio*
@@ -40,7 +43,7 @@ files are bumped to 0.6.1; the git tag is the user's to create.
   11–180 µs on the hardware.) Known tty limitation: a raw terminal has no
   key-release event, so DAS and soft-drop "hold" ride the kernel autorepeat
   stream (documented in `das.cyr`). In dev/CI (no console/framebuffer/sound)
-  the simulation is proven by the 277 deterministic assertions + the seedable
+  the simulation is proven by the 340 deterministic assertions + the seedable
   `<frames>` smoke (varies by seed; renders a valid 210×240 PPM); `audio_play`
   no-ops with no device, so the headless path never touches sound.
 
@@ -75,9 +78,9 @@ Planned: `src/save.cyr` (M5, sankoch + sigil).
 
 ## Tests
 
-- `tests/cyrius-polyomino.tcyr` — **277 assertions, 0 failed** (253 at 0.5.4): piece, board, rng (LCG + 7-bag permutation/two-bag stream), world (move/SRS rotate/gravity/clear/top-out), SRS (decode/transitions/wall+floor kick/boxed-fail), hard drop, hold, scoring (combo/B2B/T-spin), world tick, gravity curve, DAS, score helpers, render (pixels + ghost), HUD (multi-queue/HOLD/layout), **synth (48 kHz waveform / ms→frames / decay / S16_LE byte order / L == R + amplitude bound / frame offsets)**, **audio (SFX frame counts for all seven cues / render-buffer + ring sizing / tone sample / XRUN-retry policy / a failed open is a null handle / mute toggle / no-device no-op)**, input (key decode incl. hard drop / hold / mute). Deterministic + headless.
+- `tests/cyrius-polyomino.tcyr` — **340 assertions, 0 failed** (277 at 0.6.1): piece, board, rng (LCG + 7-bag permutation/two-bag stream), world (move/SRS rotate/gravity/clear/top-out), SRS (decode/transitions/wall+floor kick/boxed-fail), hard drop, hold, scoring (combo/B2B/T-spin), world tick, gravity curve, DAS, score helpers, render (pixels + ghost), HUD (multi-queue/HOLD/layout), **synth (48 kHz waveform / ms→frames / decay / S16_LE byte order / L == R + amplitude bound / frame offsets)**, **audio (SFX frame counts for all seven cues / render-buffer + ring sizing / tone sample / XRUN-retry policy / a failed open is a null handle / mute toggle / no-device no-op)**, input (key decode incl. hard drop / hold / mute, split escape sequences, the game-over wait, argument validation), lock delay + lock out, present geometry + PPM dump. Deterministic + headless.
 - `tests/cyrius-polyomino.bcyr` — benchmark stub (no-op; `include`s `lib/bench.cyr` since 6.3.x; real benches at the P(-1) pass)
-- `tests/cyrius-polyomino.fcyr` — fuzz stub
+- `tests/cyrius-polyomino.fcyr` — random play checked against the world's invariants (cell conservation, no surviving full rows, piece never overlapping the stack, field ranges, replay determinism) + random bytes through the input decoder. Pass a seed count for a longer sweep.
 - Playtest gate: the interactive loop + `/dev/fb0` present need a real Linux console (build/lint + headless-smoke-verified only so far).
 
 ## Dependencies
@@ -122,7 +125,7 @@ See [`roadmap.md`](roadmap.md). Immediate sequence:
    PCM (`/proc/asound/card1/pcm0p/sub0/status` not `closed` — e.g. PipeWire
    playing another app's audio): a busy device is now skipped, not waited on.
    vani's open is checked against a FIFO (fails fast, blocking fd) but not yet
-   on the card: the 0.5.5, 0.6.0 and 0.6.1 build sessions had no device ACL
+   on the card: the 0.5.5 through 0.6.2 build sessions had no device ACL
    (`-EACCES`).
 2. **M5 — high-score persistence** (v0.7.0): `src/save.cyr` — top-10 table at
    `~/.cyrius-polyomino/scores.cyb`, sankoch-compressed + sigil-hashed, with

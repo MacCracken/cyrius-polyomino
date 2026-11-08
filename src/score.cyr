@@ -1,7 +1,7 @@
 # score.cyr — line-clear scoring + level progression. See ADR 0001.
 #
 # Guideline base scoring: a Single is 100, a Double 300, a Triple 500, a
-# Tetris (four lines) 800, each multiplied by (level + 1). Level rises one
+# Quad (four lines) 800, each multiplied by (level + 1). Level rises one
 # step per ten lines cleared. Pure integer math, deterministic.
 #
 # M3 layers the modern guideline bonuses on top, all here as pure helpers
@@ -9,7 +9,7 @@
 #   - T-spin scoring (score_base): a T locked via rotation with three of its
 #     box corners filled scores far higher. kind 2 = proper T-spin
 #     (400/800/1200/1600 for 0/1/2/3 lines), kind 1 = mini (100/200/400).
-#   - back-to-back (is_difficult): consecutive "difficult" clears — a Tetris
+#   - back-to-back (is_difficult): consecutive "difficult" clears — a Quad
 #     or any line-clearing T-spin — earn +50% of the base (applied by the
 #     world when the previous clear was also difficult).
 #   - combo (combo_bonus): each consecutive line-clearing lock adds
@@ -46,7 +46,7 @@ fn score_base(kind, n, level): i64 {
     return score_for_lines(n, level);
 }
 
-# A "difficult" clear (counts toward back-to-back): a Tetris, or any T-spin
+# A "difficult" clear (counts toward back-to-back): a Quad, or any T-spin
 # that clears at least one line.
 fn is_difficult(kind, n): i64 {
     if (n == 0) { return 0; }

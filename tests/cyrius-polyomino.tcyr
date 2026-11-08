@@ -16,6 +16,7 @@ include "src/synth.cyr"
 include "src/audio.cyr"
 include "src/input.cyr"
 include "src/das.cyr"
+include "src/present.cyr"
 
 # --- helpers -----------------------------------------------------------
 
@@ -49,6 +50,10 @@ fn t_force(wd, t, rot, x, y): i64 {
     store64(wd + WO_CUR_X, x);
     store64(wd + WO_CUR_Y, y);
     store64(wd + WO_STATE, WS_PLAYING);
+    store64(wd + WO_LOCK_LOW, y);
+    store64(wd + WO_LOCK_TOUCHED, 0);
+    store64(wd + WO_LOCK_RESETS, 0);
+    store64(wd + WO_LOCK_TIMER, 0);
     return 0;
 }
 
@@ -504,9 +509,9 @@ fn test_score() {
     assert_eq(score_for_lines(1, 0), 100, "single = 100");
     assert_eq(score_for_lines(2, 0), 300, "double = 300");
     assert_eq(score_for_lines(3, 0), 500, "triple = 500");
-    assert_eq(score_for_lines(4, 0), 800, "tetris = 800");
+    assert_eq(score_for_lines(4, 0), 800, "quad = 800");
     assert_eq(score_for_lines(1, 1), 200, "single x level 2");
-    assert_eq(score_for_lines(4, 2), 2400, "tetris x level 3");
+    assert_eq(score_for_lines(4, 2), 2400, "quad x level 3");
     assert_eq(level_for_lines(0), 0, "level 0 at 0 lines");
     assert_eq(level_for_lines(9), 0, "still level 0 at 9");
     assert_eq(level_for_lines(10), 1, "level 1 at 10");
@@ -522,7 +527,7 @@ fn test_score() {
     assert_eq(score_base(2, 3, 1), 3200, "T-spin triple x level 2");
 
     # difficulty (back-to-back eligibility) + combo bonus
-    assert_eq(is_difficult(0, 4), 1, "Tetris is difficult");
+    assert_eq(is_difficult(0, 4), 1, "a quad is difficult");
     assert_eq(is_difficult(0, 2), 0, "a plain double is not");
     assert_eq(is_difficult(2, 1), 1, "a line-clearing T-spin is difficult");
     assert_eq(is_difficult(1, 0), 0, "a no-line spin is not a difficult clear");
@@ -557,7 +562,7 @@ fn test_world_scoring() {
     world_gravity(wb);
     assert_eq(world_combo(wb), 0 - 1, "clear-less lock resets combo");
 
-    # back-to-back: a Tetris arms B2B; the next Tetris gets +50%
+    # back-to-back: a quad arms B2B; the next quad gets +50%
     var b2 = board_new(10, 20);
     t_fill_row_full(b2, 16); board_set(b2, 0, 16, 0);
     t_fill_row_full(b2, 17); board_set(b2, 0, 17, 0);
@@ -567,9 +572,9 @@ fn test_world_scoring() {
     store64(w2 + WO_SCORE, 0);
     store64(w2 + WO_COMBO, 0 - 1);
     t_force(w2, 0, 1, 0 - 2, 16);             # vertical I fills col 0, rows 16..19
-    assert_eq(world_gravity(w2), 4, "Tetris clears four");
-    assert_eq(world_b2b(w2), 1, "Tetris arms back-to-back");
-    assert_eq(world_score(w2), 800, "first Tetris is 800, no B2B bonus yet");
+    assert_eq(world_gravity(w2), 4, "a quad clears four");
+    assert_eq(world_b2b(w2), 1, "a quad arms back-to-back");
+    assert_eq(world_score(w2), 800, "first quad is 800, no B2B bonus yet");
 
     var b3 = board_new(10, 20);
     t_fill_row_full(b3, 16); board_set(b3, 0, 16, 0);
@@ -581,8 +586,8 @@ fn test_world_scoring() {
     store64(w3 + WO_B2B, 1);                  # previous clear was difficult
     store64(w3 + WO_COMBO, 0 - 1);
     t_force(w3, 0, 1, 0 - 2, 16);
-    assert_eq(world_gravity(w3), 4, "second Tetris clears four");
-    assert_eq(world_score(w3), 1200, "back-to-back Tetris = 800 + 400");
+    assert_eq(world_gravity(w3), 4, "second quad clears four");
+    assert_eq(world_score(w3), 1200, "back-to-back quad = 800 + 400");
 
     # T-spin double: a rotated T wedged into a 3-corner slot
     var b4 = board_new(10, 20);
@@ -726,7 +731,7 @@ fn test_audio() {
     assert_eq(sfx_render(abuf, SFX_ROTATE), 672, "rotate tick = 14ms");
     assert_eq(sfx_render(abuf, SFX_LOCK), 1440, "lock thud = 30ms");
     assert_eq(sfx_render(abuf, SFX_CLEAR), 4800, "clear chime = 40ms + 60ms");
-    assert_eq(sfx_render(abuf, SFX_TETRIS), 11520, "fanfare = three 50ms + one 90ms");
+    assert_eq(sfx_render(abuf, SFX_QUAD), 11520, "fanfare = three 50ms + one 90ms");
     assert_eq(sfx_render(abuf, SFX_LEVELUP), 6720, "level-up = 60ms + 80ms");
     assert_eq(sfx_render(abuf, SFX_TOPOUT), 15360, "sting = 80ms + 80ms + 160ms");
     assert_eq(t_frame_faults(abuf, 15360, SYNTH_AMP), 0, "sting frames L == R, within +/-amp");
@@ -735,7 +740,7 @@ fn test_audio() {
     # worst one-frame burst (quad + level-up), so a write never blocks
     assert_eq(SFX_MAX_BYTES, SFX_MAX_FRAMES * SYNTH_FRAME_BYTES, "render buffer = frames x frame bytes");
     assert_eq(sfx_render(abuf, SFX_TOPOUT) <= SFX_MAX_FRAMES, 1, "longest cue fits the buffer");
-    var burst = sfx_render(abuf, SFX_TETRIS) + sfx_render(abuf, SFX_LEVELUP);
+    var burst = sfx_render(abuf, SFX_QUAD) + sfx_render(abuf, SFX_LEVELUP);
     assert_eq(burst <= AUDIO_BUFFER_FRAMES, 1, "quad + level-up fits the ring");
     assert_eq(AUDIO_BUFFER_FRAMES % AUDIO_PERIOD_FRAMES, 0, "ring is whole periods");
     assert_eq(AUDIO_BUFFER_FRAMES / AUDIO_PERIOD_FRAMES <= 32, 1, "<= 32 periods (HD-Audio cap)");
@@ -768,7 +773,16 @@ fn test_audio() {
 
 # --- input -------------------------------------------------------------
 
-# Input: key decoding for each action.
+# Decode up to three bytes a, b, c, as a read of length n.
+fn t_decode3(a, b, c, n): i64 {
+    var k[3];
+    store8(&k, a);
+    store8(&k + 1, b);
+    store8(&k + 2, c);
+    return input_decode(&k, n);
+}
+
+# Input: key decoding, split sequences, the key wait, and argument checks.
 fn test_input() {
     test_group("input");
     assert_eq(poly_key_action(97), ACT_LEFT, "a -> left");
@@ -780,7 +794,81 @@ fn test_input() {
     assert_eq(poly_key_action(99), ACT_HOLD, "c -> hold");
     assert_eq(poly_key_action(109), ACT_MUTE, "m -> mute");
     assert_eq(poly_key_action(113), ACT_QUIT, "q -> quit");
+    assert_eq(poly_key_action(3), ACT_QUIT, "ctrl-c -> quit");
     assert_eq(poly_key_action(120), 0, "unmapped key -> no action");
+
+    # the bytes of an arrow sequence decode to their action
+    assert_eq(t_decode3(27, 91, 65, 3), ACT_ROT_CW, "ESC [ A -> rotate CW");
+    assert_eq(t_decode3(27, 91, 66, 3), ACT_SOFT, "ESC [ B -> soft drop");
+    assert_eq(t_decode3(27, 91, 67, 3), ACT_RIGHT, "ESC [ C -> right");
+    assert_eq(t_decode3(27, 91, 68, 3), ACT_LEFT, "ESC [ D -> left");
+    assert_eq(t_decode3(27, 91, 90, 3), 0, "an unknown CSI final byte -> no action");
+    assert_eq(t_decode3(27, 91, 65, 0), 0, "no bytes -> no action");
+
+    # ESC alone is quit, but a read cut off inside a sequence is not
+    assert_eq(t_decode3(27, 0, 0, 1), ACT_QUIT, "a lone ESC quits");
+    assert_eq(t_decode3(27, 120, 0, 2), ACT_QUIT, "ESC + another key quits");
+    assert_eq(t_decode3(27, 91, 0, 2), 0, "ESC [ split across reads does not quit");
+    assert_eq(t_decode3(97, 27, 91, 3), ACT_LEFT, "a key then a split sequence keeps the key");
+    # the tail of a split sequence maps to nothing on the next read
+    assert_eq(t_decode3(91, 65, 0, 2), 0, "the rest of a split sequence is inert");
+
+    # a final ESC when the buffer filled is a split sequence too
+    var full[INPUT_READ_BYTES];
+    memset(&full, 120, INPUT_READ_BYTES);
+    store8(&full + (INPUT_READ_BYTES - 1), 27);
+    assert_eq(input_decode(&full, INPUT_READ_BYTES), 0, "ESC ending a full read does not quit");
+    assert_eq(input_decode(&full, INPUT_READ_BYTES - 1), 0, "bytes before it are unmapped");
+
+    # the game-over wait ignores keys for the grace window, then takes any
+    assert_eq(input_wait_done(0, ACT_LEFT), 0, "a key on the first frame is ignored");
+    assert_eq(input_wait_done(INPUT_WAIT_GRACE_FRAMES - 1, ACT_QUIT), 0, "still ignored at the end of the window");
+    assert_eq(input_wait_done(INPUT_WAIT_GRACE_FRAMES, 0), 0, "no key, no exit");
+    assert_eq(input_wait_done(INPUT_WAIT_GRACE_FRAMES, ACT_LEFT), 1, "a key after the window ends the wait");
+
+    # command-line numbers are validated before atoi
+    assert_eq(input_arg_is_int("600", 0), 1, "digits are a count");
+    assert_eq(input_arg_is_int("0", 0), 1, "zero is a count");
+    assert_eq(input_arg_is_int("", 0), 0, "empty is not a number");
+    assert_eq(input_arg_is_int("--help", 0), 0, "a flag is not a number");
+    assert_eq(input_arg_is_int("12x", 0), 0, "trailing junk is not a number");
+    assert_eq(input_arg_is_int("-5", 0), 0, "a count cannot be negative");
+    assert_eq(input_arg_is_int("-5", 1), 1, "a seed can be negative");
+    assert_eq(input_arg_is_int("-", 1), 0, "a bare minus is not a number");
+    assert_eq(input_arg_is_int("123456789012345678", 0), 1, "18 digits fit i64");
+    assert_eq(input_arg_is_int("1234567890123456789", 0), 0, "19 digits could wrap");
+    return 0;
+}
+
+# --- present + PPM dump ------------------------------------------------
+
+# Present geometry, and the PPM dump's file handling.
+fn test_present() {
+    test_group("present");
+    assert_eq(present_scale_for(210, 240, 210, 240), 1, "exact fit is scale 1");
+    assert_eq(present_scale_for(640, 480, 210, 240), 2, "VGA fits at scale 2");
+    assert_eq(present_scale_for(1920, 1080, 210, 240), 4, "1080p is limited by height");
+    assert_eq(present_scale_for(3840, 2160, 210, 240), PRESENT_MAX_SCALE, "scale stops at the cap");
+    assert_eq(present_scale_for(209, 240, 210, 240), 0, "too narrow does not fit");
+    assert_eq(present_scale_for(210, 239, 210, 240), 0, "too short does not fit");
+    assert_eq(present_scale_for(0, 0, 210, 240), 0, "a zero probe does not fit");
+
+    # reads are bounds-checked like writes
+    var f = fb_new(24, 24);
+    assert_eq(fb_get(f, 0 - 1, 0, 0), 0, "out-of-range read returns 0 (x)");
+    assert_eq(fb_get(f, 0, 24, 0), 0, "out-of-range read returns 0 (y)");
+
+    # a dump replaces a longer file: 13-byte header + 24 x 24 x 3 pixels
+    var path = "/tmp/cyrius-polyomino-test.ppm";
+    var fd = file_open(path, 577, 0x1A4);
+    file_write(fd, alloc(4096), 4096);
+    file_close(fd);
+    assert_eq(fb_write_ppm(f, path), 0, "dump succeeds");
+    fd = file_open(path, 0, 0);
+    assert_eq(sys_lseek(fd, 0, 2), 1741, "dump leaves no stale tail");
+    file_close(fd);
+    sys_unlink(path);
+    assert_eq(fb_write_ppm(f, "/nonexistent-dir/x.ppm"), 0 - 1, "an unopenable path is reported");
     return 0;
 }
 
@@ -864,6 +952,133 @@ fn test_world_tick() {
     return 0;
 }
 
+# --- lock delay + lock out ---------------------------------------------
+
+# Alternate the two kick-up rotations each time the T touches down, the key
+# sequence that could once hold a piece up forever. Returns the frames until
+# something locked, capped at `limit`.
+fn t_stall_frames(wd, limit): i64 {
+    var b = world_board(wd);
+    var frames = 0;
+    var phase = 0;
+    while (frames < limit) {
+        if (board_count(b) != 0) { return frames; }
+        if (world_grounded(wd) == 1) {
+            if (world_cur_rot(wd) == 0) {
+                if (phase == 0) {
+                    world_rotate(wd, 1);
+                    world_rotate(wd, 0 - 1);
+                    phase = 1;
+                } else {
+                    world_rotate(wd, 0 - 1);
+                    world_rotate(wd, 1);
+                    phase = 0;
+                }
+            }
+        }
+        world_tick(wd, 0);
+        frames = frames + 1;
+    }
+    return frames;
+}
+
+# Lock delay: the reset budget, its refill, the bounded stall, and lock out.
+fn test_world_lockdelay() {
+    test_group("world lock delay");
+
+    var b = board_new(10, 20);
+    var wd = world_new(b, 42);
+    t_force(wd, 2, 0, 4, 18);
+    assert_eq(t_stall_frames(wd, 20000) < 1000, 1, "kick cycling cannot stall a piece");
+    assert_eq(board_count(b), 4, "the stalled piece did lock");
+
+    # maneuvering in the air spends nothing
+    var b2 = board_new(10, 20);
+    var w2 = world_new(b2, 42);
+    t_force(w2, 1, 0, 3, 5);
+    world_move(w2, 1);
+    assert_eq(load64(w2 + WO_LOCK_RESETS), 0, "an airborne move spends no reset");
+
+    # grounded moves spend budget, up to the cap
+    var b3 = board_new(10, 20);
+    var w3 = world_new(b3, 42);
+    t_force(w3, 1, 0, 3, 18);
+    var i = 0;
+    while (i < 20) {
+        world_move(w3, 1 - ((i % 2) * 2));
+        i = i + 1;
+    }
+    assert_eq(load64(w3 + WO_LOCK_RESETS), LOCK_MAX_RESETS, "reset budget stops at the cap");
+
+    # sliding off a ledge still counts: it was resting when it moved
+    var b4 = board_new(10, 20);
+    board_set(b4, 4, 12, 1);
+    var w4 = world_new(b4, 42);
+    t_force(w4, 1, 0, 3, 10);                 # O resting on the one cell at (4,12)
+    assert_eq(world_grounded(w4), 1, "O rests on the ledge");
+    assert_eq(world_move(w4, 1), 1, "slides off the ledge");
+    assert_eq(world_grounded(w4), 0, "airborne after the slide");
+    assert_eq(load64(w4 + WO_LOCK_RESETS), 1, "sliding off a ledge spends a reset");
+
+    # falling to a new lowest row refills the timer and the budget
+    var b5 = board_new(10, 20);
+    var w5 = world_new(b5, 42);
+    t_force(w5, 1, 0, 3, 10);
+    store64(w5 + WO_LOCK_RESETS, 5);
+    store64(w5 + WO_LOCK_TIMER, 7);
+    store64(w5 + WO_LOCK_TOUCHED, 1);
+    i = 0;
+    while (i < 48) { world_tick(w5, 0); i = i + 1; }
+    assert_eq(world_cur_y(w5), 11, "fell one row");
+    assert_eq(load64(w5 + WO_LOCK_RESETS), 0, "a new lowest row refills the budget");
+    assert_eq(load64(w5 + WO_LOCK_TIMER), 0, "a new lowest row restarts the timer");
+
+    # kicked back above its lowest row, the timer pauses rather than restarts
+    var b6 = board_new(10, 20);
+    var w6 = world_new(b6, 42);
+    t_force(w6, 1, 0, 3, 10);
+    store64(w6 + WO_LOCK_LOW, 12);
+    store64(w6 + WO_LOCK_TIMER, 20);
+    world_tick(w6, 0);
+    assert_eq(load64(w6 + WO_LOCK_TIMER), 20, "the lock timer pauses while airborne");
+
+    # budget spent: landing back on a row it already rested on commits at once
+    var b7 = board_new(10, 20);
+    var w7 = world_new(b7, 42);
+    t_force(w7, 1, 0, 3, 17);
+    store64(w7 + WO_LOCK_LOW, 18);
+    store64(w7 + WO_LOCK_RESETS, LOCK_MAX_RESETS);
+    i = 0;
+    while (i < 47) { world_tick(w7, 0); i = i + 1; }
+    assert_eq(board_count(b7), 0, "still falling");
+    world_tick(w7, 0);
+    assert_eq(board_count(b7), 4, "a spent budget locks on landing");
+
+    # lock out, through real rotations: the I kicks up, then lies flat above
+    # the well, resting on the one cell at (7,0)
+    var b8 = board_new(10, 20);
+    board_set(b8, 3, 2, 1);
+    board_set(b8, 5, 2, 1);
+    board_set(b8, 6, 2, 1);
+    board_set(b8, 7, 0, 1);
+    var w8 = world_new(b8, 42);
+    t_force(w8, 0, 0, 3, 0);
+    assert_eq(world_rotate(w8, 1), 1, "I kicks up off the stack");
+    assert_eq(world_cur_y(w8), 0 - 2, "kicked two rows above the well");
+    assert_eq(world_rotate(w8, 0 - 1), 1, "I lies flat above the well");
+    assert_eq(world_grounded(w8), 1, "resting on the top row");
+    world_hard_drop(w8);
+    assert_eq(world_state(w8), WS_GAME_OVER, "locking wholly above the well ends the game");
+    assert_eq(board_count(b8), 4, "lock out stores nothing");
+
+    # board_lock reports what it kept (the well has no hidden rows)
+    var b9 = board_new(10, 20);
+    assert_eq(board_lock(b9, 0, 1, 0, 0 - 1), 3, "one cell above the top is dropped");
+    assert_eq(board_lock(b9, 0, 0, 3, 0 - 2), 0, "a piece wholly above stores nothing");
+    assert_eq(board_lock(b9, 1, 0, 3, 5), 4, "a piece in the well stores all four");
+    return 0;
+}
+
 # --- DAS ---------------------------------------------------------------
 
 # DAS: first shift, charge delay, auto-repeat, release, and reversal.
@@ -925,9 +1140,7 @@ fn test_hud() {
     # I (peek 1) sits at row offset (6*3+4)=22; its cells are on row 1 -> +6.
     assert_eq(fb_get(f, 0, 28, 0), 40, "queue piece 1 (I) drawn a row down in teal");
 
-    # full HUD panel render lands to the right of the well. The surface
-    # width must use explicit parens around the multiply (Cyrius mis-parses
-    # `literal * ENUM + literal` — see hud_panel_x / CLAUDE.md).
+    # full HUD panel render lands to the right of the well
     var surf = fb_new((10 * CELL) + 90, 20 * CELL);
     assert_eq(fb_w(surf), 210, "panel surface is well + 90px HUD wide");
     assert_eq(hud_panel_x(wd), 126, "HUD panel x is just right of the well");
@@ -956,6 +1169,7 @@ fn main() {
     test_world_harddrop();
     test_world_hold();
     test_world_tick();
+    test_world_lockdelay();
     test_gravity();
     test_das();
     test_score();
@@ -965,6 +1179,7 @@ fn main() {
     test_synth();
     test_audio();
     test_input();
+    test_present();
     return assert_summary();
 }
 

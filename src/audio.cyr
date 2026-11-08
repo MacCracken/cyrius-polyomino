@@ -26,7 +26,7 @@ enum SfxEvent {
     SFX_ROTATE = 1;     # rotation — slightly lower tick
     SFX_LOCK = 2;       # soft-lock thud — short low tone
     SFX_CLEAR = 3;      # line clear (1-3) — rising two-note chime
-    SFX_TETRIS = 4;     # quad clear — rising four-note fanfare
+    SFX_QUAD = 4;     # quad clear — rising four-note fanfare
     SFX_LEVELUP = 5;    # level advance — bright two-note cue
     SFX_TOPOUT = 6;     # game over — descending sting
 }
@@ -56,7 +56,7 @@ fn sfx_render(buf, ev): i64 {
         off = sfx_note(buf, off, 880, 60);
         return off;
     }
-    if (ev == SFX_TETRIS) {
+    if (ev == SFX_QUAD) {
         off = sfx_note(buf, off, 523, 50);
         off = sfx_note(buf, off, 659, 50);
         off = sfx_note(buf, off, 784, 50);

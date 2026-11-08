@@ -56,7 +56,7 @@ fn run_headless(frames, seed): i64 {
     }
     render_world(f, wd);
     hud_render(f, wd);
-    fb_write_ppm(f, "build/cyrius-polyomino-headless.ppm");
+    var dumped = fb_write_ppm(f, "build/cyrius-polyomino-headless.ppm");
     println("cyrius-polyomino headless smoke — score lines level state cells:");
     fmt_int_fd(1, world_score(wd));
     file_write(1, " ", 1);
@@ -68,6 +68,11 @@ fn run_headless(frames, seed): i64 {
     file_write(1, " ", 1);
     fmt_int_fd(1, board_count(world_board(wd)));
     file_write(1, "\n", 1);
+    if (dumped != 0) {
+        var msg = "cyrius-polyomino: could not write build/cyrius-polyomino-headless.ppm\n";
+        file_write(2, msg, strlen(msg));
+        return 1;
+    }
     return 0;
 }
 
@@ -98,14 +103,17 @@ fn render_gameover(f): i64 {
     return 0;
 }
 
-# Console-only: block until any mapped key, so the game-over screen stays
-# up to be read. No-op-fast under no tty (input_poll returns 0 forever, so
-# the caller should only reach this on a real top-out during real play).
+# Keep the game-over screen up until a mapped key. Keys still arriving from
+# play are read and ignored for a short grace window. With no terminal there
+# is nobody to answer, so it returns at once.
 fn wait_key(): i64 {
-    var a = 0;
-    while (a == 0) {
+    if (input_is_raw() == 0) { return 0; }
+    var frame = 0;
+    var act = 0;
+    while (input_wait_done(frame, act) == 0) {
         frame_sleep();
-        a = input_poll();
+        act = input_poll();
+        frame = frame + 1;
     }
     return 0;
 }
@@ -164,7 +172,7 @@ fn run_interactive(seed): i64 {
             lv = world_level(wd);
             cells = board_count(world_board(wd));
             cleared = world_hard_drop(wd);
-            if (cleared == 4) { audio_play(SFX_TETRIS); }
+            if (cleared == 4) { audio_play(SFX_QUAD); }
             else { if (cleared > 0) { audio_play(SFX_CLEAR); }
                 else { audio_play(SFX_LOCK); } }
             if (cleared > 0) { flash = FLASH_FRAMES; }
@@ -176,7 +184,7 @@ fn run_interactive(seed): i64 {
         lv = world_level(wd);
         cells = board_count(world_board(wd));
         cleared = world_tick(wd, soft);
-        if (cleared == 4) { audio_play(SFX_TETRIS); }
+        if (cleared == 4) { audio_play(SFX_QUAD); }
         else { if (cleared > 0) { audio_play(SFX_CLEAR); }
             else { if (board_count(world_board(wd)) > cells) { audio_play(SFX_LOCK); } } }
         if (cleared > 0) { flash = FLASH_FRAMES; }
@@ -209,18 +217,43 @@ fn run_interactive(seed): i64 {
     return 0;
 }
 
+# Print command-line usage to stderr; returns the exit status for bad usage.
+fn usage(): i64 {
+    var m = "usage: cyrius-polyomino [frames [seed]]\n";
+    file_write(2, m, strlen(m));
+    m = "  no arguments   play on the Linux console\n";
+    file_write(2, m, strlen(m));
+    m = "  frames [seed]  headless smoke; writes build/cyrius-polyomino-headless.ppm\n";
+    file_write(2, m, strlen(m));
+    return 2;
+}
+
+# Whether the arguments are a valid headless request: `<frames> [seed]`.
+fn args_valid(): i64 {
+    if (argc() > 3) { return 0; }
+    if (input_arg_is_int(argv(1), 0) == 0) { return 0; }
+    if (argc() == 3) { return input_arg_is_int(argv(2), 1); }
+    return 1;
+}
+
 # Headless smoke when given `<frames> [seed]` arguments, otherwise play.
 fn main(): i64 {
     alloc_init();
     args_init();
     hud_init();
     if (argc() >= 2) {
+        if (args_valid() == 0) { return usage(); }
         var seed = DEFAULT_SEED;
         if (argc() >= 3) { seed = atoi(argv(2)); }
         return run_headless(atoi(argv(1)), seed);
     }
-    # Interactive: vary the seed per run so games differ, staying simple.
-    var s = DEFAULT_SEED + syscall(201, 0) * 1000003;
+    # Interactive: vary the seed per run so games differ. clock_gettime rather
+    # than time, which has no aarch64 number (there 201 is listen, so every
+    # game would deal the same pieces).
+    var ts[16];
+    store64(&ts, 0);
+    syscall(228, 0, &ts);
+    var s = DEFAULT_SEED + (load64(&ts) * 1000003);
     return run_interactive(s);
 }
 

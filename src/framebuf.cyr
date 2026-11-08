@@ -88,17 +88,20 @@ fn fb_clear(f, r, g, b): i64 {
     return 0;
 }
 
-# Dump the surface as a binary PPM (P6). Returns 0 on success, -1 if the
-# file could not be opened. flags 65 = O_WRONLY|O_CREAT, mode 0644 (0x1A4).
+# Dump the surface as a binary PPM (P6), replacing any existing file. Returns
+# 0 on success, -1 if the file could not be opened or the pixels did not all
+# reach it. flags 577 = O_WRONLY|O_CREAT|O_TRUNC, mode 0644 (0x1A4).
 fn fb_write_ppm(f, path): i64 {
-    var fd = file_open(path, 65, 0x1A4);
+    var fd = file_open(path, 577, 0x1A4);
     if (fd < 0) { return 0 - 1; }
     file_write(fd, "P6\n", 3);
     fmt_int_fd(fd, load64(f + FB_W));
     file_write(fd, " ", 1);
     fmt_int_fd(fd, load64(f + FB_H));
     file_write(fd, "\n255\n", 5);
-    file_write(fd, load64(f + FB_PX), load64(f + FB_W) * load64(f + FB_H) * 3);
+    var n = load64(f + FB_W) * load64(f + FB_H) * 3;
+    var wrote = file_write(fd, load64(f + FB_PX), n);
     file_close(fd);
+    if (wrote != n) { return 0 - 1; }
     return 0;
 }

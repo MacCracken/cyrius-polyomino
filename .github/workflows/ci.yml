@@ -23,21 +23,24 @@ jobs:
           set -e
           # The cyrius.cyml `[package].cyrius` pin is the single source of
           # truth for the toolchain version (CLAUDE.md § Rules) — no version
-          # is hardcoded in this YAML. Hand the pin to the upstream installer,
-          # which fetches the prebuilt release (sha256-verified) and lays it
-          # out under $HOME/.cyrius/versions/<v>/ — the versioned layout
-          # `cyrius deps` resolves the pinned stdlib snapshot from.
+          # is hardcoded in this YAML. Hand the pin to the upstream installer
+          # (taken from that same tag, not a moving branch), which fetches the
+          # prebuilt release (sha256-verified) and lays it out under
+          # $HOME/.cyrius/versions/<v>/ — the versioned layout `cyrius deps`
+          # resolves the pinned stdlib snapshot from.
           CYRIUS_VERSION="$(grep '^cyrius = ' cyrius.cyml | head -1 | sed 's/cyrius = "\(.*\)"/\1/')"
           echo "Installing Cyrius $CYRIUS_VERSION"
-          curl -sSf https://raw.githubusercontent.com/MacCracken/cyrius/main/scripts/install.sh | \
+          curl -sSf "https://raw.githubusercontent.com/MacCracken/cyrius/$CYRIUS_VERSION/scripts/install.sh" | \
             CYRIUS_VERSION="$CYRIUS_VERSION" sh
           echo "$HOME/.cyrius/bin" >> "$GITHUB_PATH"
 
       - name: Resolve dependencies
         # Materialises ./lib/ from the version-matched stdlib snapshot. ./lib/
         # is gitignored (never committed — a vendored copy goes stale vs the
-        # pinned compiler's stdlib).
-        run: cyrius deps
+        # pinned compiler's stdlib). --verify holds it to cyrius.lock.
+        run: |
+          cyrius deps
+          cyrius deps --verify
 
       - name: Build
         run: |
@@ -65,6 +68,11 @@ jobs:
         run: |
           cyrius test tests/cyrius-polyomino.tcyr 2>&1 | tee /tmp/test_output
           tail -1 /tmp/test_output | grep ', 0 failed'
+
+      - name: Audit sweep
+        # fmt, lint, docs (every public fn has a comment), tests, the fuzz
+        # sweep and benches. Non-zero on any finding.
+        run: cyrius audit </dev/null
 
   docs:
     name: Documentation
@@ -110,6 +118,16 @@ jobs:
             exit 1
           fi
           echo "OK: no sys_system / exec_cmd in src/"
+
+      - name: No trademarked product name
+        # ADR 0001: generic genre language only. The ADR itself names the
+        # holder once, deliberately, so docs/adr/ is out of scope here.
+        run: |
+          if grep -rniE 'tetris' src/ tests/ benches/ README.md CHANGELOG.md docs/guides/ docs/standards/ docs/development/ docs/audit/; then
+            echo "::error::trademarked name found (ADR 0001)"
+            exit 1
+          fi
+          echo "OK: generic genre language only"
 
       - name: No raw execve
         run: |

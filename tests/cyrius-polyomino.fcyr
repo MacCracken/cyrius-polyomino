@@ -1,15 +1,228 @@
-# cyrius-polyomino fuzz harness
+# cyrius-polyomino fuzz harness: random play checked against the world's
+# invariants, plus random bytes through the input decoder.
+#
+# Deterministic by construction (seeds 1..N, an LCG picks the keys), so a
+# failure replays exactly. `cyrius fuzz tests/cyrius-polyomino.fcyr` runs the
+# short sweep; build it and pass a seed count for a longer one.
 
-# Fuzz target stub: accepts any input and does nothing yet.
-fn fuzz_main(data, len) {
-    if (len == 0) { return 0; }
+include "src/piece.cyr"
+include "src/board.cyr"
+include "src/score.cyr"
+include "src/gravity.cyr"
+include "src/rng.cyr"
+include "src/srs.cyr"
+include "src/world.cyr"
+include "src/framebuf.cyr"
+include "src/render.cyr"
+include "src/hud.cyr"
+include "src/input.cyr"
+
+enum FuzzConst {
+    FUZZ_SEEDS = 100;         # games in the default sweep (each is played twice)
+    FUZZ_MAX_STEPS = 4000;    # frames per game before giving up on a top-out
+    FUZZ_DECODE_ROUNDS = 2000;
+}
+
+var fuzz_failures = 0;
+var fuzz_steps = 0;
+
+# Record a violated invariant; prints the first few with the seed to replay.
+fn fuzz_fail(seed, why): i64 {
+    fuzz_failures = fuzz_failures + 1;
+    if (fuzz_failures <= 12) {
+        file_write(1, why, strlen(why));
+        file_write(1, " at seed ", 9);
+        fmt_int_fd(1, seed);
+        file_write(1, "\n", 1);
+    }
     return 0;
 }
 
-# Run the fuzz target once on a fixed input.
+# How many of the active piece's cells sit above the well at origin row `y`.
+fn fuzz_cells_above(wd, y): i64 {
+    var word = piece_word(world_cur_type(wd), world_cur_rot(wd));
+    var k = 0;
+    var n = 0;
+    while (k < 4) {
+        if ((y + cell_y(word, k)) < 0) { n = n + 1; }
+        k = k + 1;
+    }
+    return n;
+}
+
+# Number of completely full rows on the board.
+fn fuzz_full_rows(b): i64 {
+    var r = 0;
+    var n = 0;
+    while (r < board_h(b)) {
+        if (board_row_full(b, r) == 1) { n = n + 1; }
+        r = r + 1;
+    }
+    return n;
+}
+
+# Check everything that must hold between any two frames.
+fn fuzz_check_state(wd, seed): i64 {
+    var b = world_board(wd);
+    var n = board_w(b) * board_h(b);
+    var cells = board_cells(b);
+    var i = 0;
+    while (i < n) {
+        if (load8(cells + i) > 7) { fuzz_fail(seed, "cell value out of range"); }
+        i = i + 1;
+    }
+    var t = world_cur_type(wd);
+    var r = world_cur_rot(wd);
+    if ((t < 0) || (t > 6)) { fuzz_fail(seed, "piece type out of range"); }
+    if ((r < 0) || (r > 3)) { fuzz_fail(seed, "rotation out of range"); }
+    var len = load64(wd + WO_BAG_LEN);
+    if ((len < 0) || (len > BAG_CAP)) { fuzz_fail(seed, "queue length out of range"); }
+    var queue = load64(wd + WO_BAG);
+    i = 0;
+    while (i < len) {
+        if (load8(queue + i) > 6) { fuzz_fail(seed, "queue entry out of range"); }
+        i = i + 1;
+    }
+    var hold = world_hold_type(wd);
+    if (hold != HOLD_EMPTY) {
+        if ((hold < 0) || (hold > 6)) { fuzz_fail(seed, "hold out of range"); }
+    }
+    if ((world_b2b(wd) != 0) && (world_b2b(wd) != 1)) { fuzz_fail(seed, "b2b not a flag"); }
+    if (world_combo(wd) < (0 - 1)) { fuzz_fail(seed, "combo below -1"); }
+    if (load64(wd + WO_LOCK_RESETS) > LOCK_MAX_RESETS) { fuzz_fail(seed, "lock resets over budget"); }
+    if (world_level(wd) != level_for_lines(world_lines(wd))) { fuzz_fail(seed, "level does not follow lines"); }
+    if (world_state(wd) == WS_PLAYING) {
+        if (board_collides(b, piece_word(t, r), world_cur_x(wd), world_cur_y(wd)) != 0) {
+            fuzz_fail(seed, "active piece overlaps the stack");
+        }
+    }
+    return 0;
+}
+
+# A random starting stack with no full rows, so games reach the ceiling.
+fn fuzz_prefill(b, rs): i64 {
+    var height = (rng_next_state(rs) >> 40) & 15;
+    var r = 19;
+    var c = 0;
+    var s = rs;
+    while (r > (19 - height)) {
+        c = 0;
+        while (c < 10) {
+            s = rng_next_state(s);
+            if (((s >> 40) & 3) != 0) { board_set(b, c, r, ((s >> 44) & 6) + 1); }
+            c = c + 1;
+        }
+        board_set(b, (s >> 50) & 7, r, 0);
+        r = r - 1;
+    }
+    return s;
+}
+
+# Play one game of random keys. Returns a hash of its history, so a second
+# run from the same seed can prove the simulation is deterministic.
+fn fuzz_play(seed, surf): i64 {
+    var b = board_new(10, 20);
+    var rs = fuzz_prefill(b, (seed * 2654435761) + 11);
+    var wd = world_new(b, seed);
+    rs = rng_next_state(rs);
+    var startlines = (rs >> 40) & 255;       # start at a random level
+    store64(wd + WO_LINES, startlines);
+    store64(wd + WO_LEVEL, level_for_lines(startlines));
+    var score = world_score(wd);
+    var lines = world_lines(wd);
+    var hash = 0;
+    var i = 0;
+    while ((i < FUZZ_MAX_STEPS) && (world_state(wd) == WS_PLAYING)) {
+        rs = rng_next_state(rs);
+        var key = (rs >> 37) & 15;
+        var soft = 0;
+        var before = board_count(b);
+        if (key == 1) { world_move(wd, 0 - 1); }
+        if (key == 2) { world_move(wd, 1); }
+        if (key == 3) { world_rotate(wd, 1); }
+        if (key == 4) { world_rotate(wd, 0 - 1); }
+        if (key == 5) { world_hold(wd); }
+        if (key == 7) { soft = 1; }
+        # A lock in this frame stores the piece wherever it then rests: from
+        # a hard drop at its landing row, otherwise here or one row down.
+        var above_hi = fuzz_cells_above(wd, world_cur_y(wd));
+        var above_lo = fuzz_cells_above(wd, world_cur_y(wd) + 1);
+        if ((key == 6) && (((rs >> 50) & 7) == 0)) {
+            above_hi = fuzz_cells_above(wd, world_ghost_y(wd));
+            above_lo = above_hi;
+            world_hard_drop(wd);
+        }
+        world_tick(wd, soft);
+        fuzz_steps = fuzz_steps + 1;
+
+        var after = board_count(b);
+        var cleared = world_lines(wd) - lines;
+        var gained = (after - before) + (cleared * 10);
+        if ((after != before) || (cleared != 0)) {
+            if ((gained < (4 - above_hi)) || (gained > (4 - above_lo))) {
+                fuzz_fail(seed, "a lock lost or invented cells");
+            }
+            if (fuzz_full_rows(b) != 0) { fuzz_fail(seed, "a full row survived a lock"); }
+        }
+        if (world_score(wd) < score) { fuzz_fail(seed, "score went down"); }
+        if (world_lines(wd) < lines) { fuzz_fail(seed, "lines went down"); }
+        score = world_score(wd);
+        lines = world_lines(wd);
+        fuzz_check_state(wd, seed);
+        if ((i % 97) == 0) {
+            render_world(surf, wd);
+            hud_render(surf, wd);
+        }
+        hash = (hash * 31) + score + (world_cur_x(wd) * 7) + (world_cur_y(wd) * 13) + after;
+        i = i + 1;
+    }
+    return hash;
+}
+
+# Random bytes through the decoder: only defined action bits may come out.
+fn fuzz_decode(): i64 {
+    var buf[INPUT_READ_BYTES];
+    var s = 99;
+    var round = 0;
+    var i = 0;
+    var n = 0;
+    while (round < FUZZ_DECODE_ROUNDS) {
+        i = 0;
+        while (i < INPUT_READ_BYTES) {
+            s = rng_next_state(s);
+            # bias toward the bytes the decoder branches on
+            if (((s >> 40) & 3) == 0) { store8(&buf + i, 27); }
+            else { store8(&buf + i, (s >> 44) & 127); }
+            i = i + 1;
+        }
+        n = (s >> 50) & 33;
+        if ((input_decode(&buf, n) & (0 - 512)) != 0) { fuzz_fail(round, "decoder set an undefined bit"); }
+        round = round + 1;
+    }
+    return 0;
+}
+
+# Run the sweep: argv(1) overrides the seed count. Exits non-zero on a failure.
 fn main() {
     alloc_init();
-    fuzz_main("test", 4);
+    args_init();
+    hud_init();
+    var seeds = FUZZ_SEEDS;
+    if (argc() >= 2) { seeds = atoi(argv(1)); }
+    var surf = fb_new((10 * CELL) + 90, 20 * CELL);
+    var seed = 1;
+    while (seed <= seeds) {
+        if (fuzz_play(seed, surf) != fuzz_play(seed, surf)) {
+            fuzz_fail(seed, "replay from the same seed diverged");
+        }
+        seed = seed + 1;
+    }
+    fuzz_decode();
+    if (fuzz_failures != 0) {
+        fmt_int_fd(1, fuzz_failures);
+        println(" fuzz failures");
+        return 1;
+    }
     println("fuzz: ok");
     return 0;
 }

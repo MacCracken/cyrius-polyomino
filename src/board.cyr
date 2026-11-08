@@ -85,7 +85,8 @@ fn board_solid(b, c, r): i64 {
 }
 
 # Stamp tetromino `t` (rotation `r`) into the grid at (ox, oy), writing
-# `t + 1` into each cell. Cells above the top are dropped (defensive).
+# `t + 1` into each cell. The well has no hidden rows, so cells above the top
+# are dropped. Returns the number of cells stored (0 = wholly above the well).
 fn board_lock(b, t, r, ox, oy): i64 {
     var word = piece_word(t, r);
     var w = load64(b + BD_W);
@@ -93,19 +94,23 @@ fn board_lock(b, t, r, ox, oy): i64 {
     var k = 0;
     var cx = 0;
     var cy = 0;
+    var stored = 0;
     while (k < 4) {
         cx = ox + cell_x(word, k);
         cy = oy + cell_y(word, k);
         if (cy >= 0) {
             if (cy < h) {
                 if (cx >= 0) {
-                    if (cx < w) { board_set(b, cx, cy, t + 1); }
+                    if (cx < w) {
+                        board_set(b, cx, cy, t + 1);
+                        stored = stored + 1;
+                    }
                 }
             }
         }
         k = k + 1;
     }
-    return 0;
+    return stored;
 }
 
 # Is row `r` completely filled?

@@ -32,7 +32,7 @@ and input self-rolled on bare stdlib ([ADR 0003](../adr/0003-self-rolled-primiti
 - [ ] Benchmarks captured (board step, line-clear scan, collision) — `bench-history.csv` seeded; promote to `docs/benchmarks.md`
 - [ ] Interactive console playthrough verified on a real Linux `/dev/fb0` console + sound card (top-out, level-up, line-clear feel, SFX timing)
 - [x] CHANGELOG complete from v0.1.0 onward
-- [ ] Security audit pass covering the M3/M4 code (`docs/audit/YYYY-MM-DD-audit.md`; the 2026-05-26 P(-1) pass predates them)
+- [x] Security audit pass covering the M3/M4 code ([2026-11-08 audit](../audit/2026-11-08-audit.md))
 - [x] Original assets only — no trademarked names, sprites, palettes, or the canonical theme tune ([ADR 0002](../adr/0002-original-assets-only.md))
 
 ## Milestones

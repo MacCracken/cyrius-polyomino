@@ -89,10 +89,23 @@ Base values, each × (level + 1):
 | single | 100 | 200 | 800 |
 | double | 300 | (400) | 1200 |
 | triple | 500 | — | 1600 |
-| tetris | 800 | — | — |
+| quad | 800 | — | — |
 
-- **Back-to-back**: consecutive *difficult* clears (a Tetris, or any
+- **Back-to-back**: consecutive *difficult* clears (a quad, or any
   line-clearing T-spin) add +50% of the base.
 - **Combo**: each consecutive line-clearing lock adds 50 × combo × (level+1),
   where combo counts from 0 on the first clear; a clear-less lock breaks it.
 - **Drops**: soft drop +1/cell, hard drop +2/cell.
+
+## Lock delay and top-out (per `src/world.cyr`)
+
+- **Lock delay**: a grounded piece commits after 30 frames. A successful move
+  or rotate restarts that timer, up to 15 times once the piece has touched
+  down. Only reaching a new lowest row refills the 15, and with the budget
+  spent, landing back on a row the piece already rested on commits at once.
+  This is the guideline's bounded "extended placement".
+- **Top-out**: the game ends when a new piece spawns overlapping the stack
+  (block out), or when a piece locks wholly above the well (lock out).
+- **Deviation: no hidden rows.** The guideline keeps a buffer zone above the
+  visible field. This well has none, so a cell that locks above row 0 is
+  dropped; only a piece with *every* cell above row 0 is a lock out.

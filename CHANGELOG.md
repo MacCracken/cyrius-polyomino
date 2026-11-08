@@ -2,6 +2,79 @@
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.2] - 2026-11-08
+
+**Code audit and repair sweep.** The whole codebase read against the project's
+rules and the documented mechanics, with each defect reproduced before it was
+fixed. Full findings in
+[`docs/audit/2026-11-08-audit.md`](docs/audit/2026-11-08-audit.md). No toolchain
+or dependency changes. Two game rules change at the edges of play: lock delay
+is properly bounded, and a piece locking wholly above the well ends the game.
+
+### Fixed
+
+- **A piece can no longer be held up forever.** The lock-reset budget and timer
+  refilled whenever the piece was airborne, so kicking up and falling back onto
+  the same row restarted them; a T survived 2,000,000 frames that way. Now only
+  a new lowest row refills the budget, every move or rotate after touchdown
+  spends it, the timer pauses in the air instead of restarting, and a spent
+  budget locks on landing. That sequence now locks in 432 frames.
+- **A split arrow key no longer quits the game.** A read ending inside `ESC [ x`
+  was taken for a lone ESC. The new pure `input_decode` waits for the rest; a
+  real ESC still quits.
+- **aarch64**: the seed used `syscall(201)`, which is `listen` there, so every
+  game dealt the same pieces, and `syscall(8)` is not `lseek`, which broke the
+  framebuffer blit. Now `clock_gettime` and stdlib `sys_lseek`.
+- **Lock out.** A piece kicked wholly above the well locked with all four cells
+  discarded and play continued. It now ends the game.
+- **No hang without a terminal.** `wait_key` spun forever on top-out when stdin
+  was not a tty.
+- **The game-over screen stays up.** A key still held at top-out dismissed it
+  at once; a 45-frame grace window now ignores keys.
+- **Ctrl-C quits.** Raw mode turns signals off, and byte 3 was unmapped.
+- **Framebuffer probing.** `fb_present_open` ignored its ioctl results, assumed
+  32 bpp, and computed negative offsets on a too-small screen. Any of those now
+  leaves the framebuffer unavailable rather than drawing garbage.
+- `input_init` checks `TCSETS`. The PPM dump truncates an existing file and
+  reports a failed write; the headless smoke exits 1 when it could not write.
+- **Arguments are validated.** Non-numeric text was read as 0, so `--help` ran a
+  0-frame smoke and overwrote the PPM. Bad usage now prints help and exits 2.
+- **Trademarked name removed** from an enum, comments, test labels and two docs
+  (ADR 0001): the four-line cue is now `SFX_QUAD`.
+
+### Changed
+
+- **The fuzz target is real.** `tests/cyrius-polyomino.fcyr` was an empty stub;
+  it now plays random games against the world's invariants (cell conservation,
+  no surviving full rows, no overlap, field ranges, replay determinism) and
+  feeds random bytes to the input decoder.
+- **CI** takes the installer from the pinned tag instead of `main`, runs
+  `cyrius deps --verify` and `cyrius audit`, and fails on the trademarked name.
+- Removed `world_soft_drop`: no callers, no tests, and it locked instantly,
+  unlike the real soft drop.
+- Corrected stale comments (`das.cyr`, `piece.cyr`, `srs.cyr`, `hud.cyr`,
+  `world.cyr`) and the README status. `docs/standards/srs-rotation.md` documents
+  lock delay, top-out, and the no-hidden-rows deviation.
+
+### Verified
+
+- `cyrius test tests/cyrius-polyomino.tcyr`: **340 / 340** (277 before), also on
+  aarch64 under qemu. Every repair was broken on purpose to confirm a test
+  fails: 18 mutations, all caught.
+- **Fuzz**: clean over 8,000 seeds (16,000 games), and over its default sweep
+  with `CYRIUS_BOUNDS=1 CYRIUS_POISON=1`.
+- **End to end**: the real game driven through a pseudo-terminal, ten checks
+  including quit keys, split sequences, the game-over wait and terminal modes
+  restored on exit.
+- **Determinism**: the headless smoke over five seed / frame pairs is
+  byte-identical to 0.6.1, in plain and DCE builds.
+- `cyrius audit`: exit 0. `cyrius lint` and `--strict`, `cyrius fmt --check`:
+  clean. `cyrius vet`: 17 deps, 0 missing. Builds for x86_64, `--aarch64` and
+  `--agnos`. `CYRIUS_DCE=1`: 80,832 → **81,096 B**. Bench over 4 interleaved
+  pairs: flat.
+- **Not exercised**: a real framebuffer blit and the sound card, so the
+  busy-device and by-ear checks are still pending a console session.
+
 ## [0.6.1] - 2026-11-08
 
 **Toolchain bump to Cyrius 6.7.18, and every public function documented.** The
@@ -385,7 +458,7 @@ best-effort and silent without a sound card (CI / no `/dev/snd`), the way
   no-ops cleanly with no device or when muted.
 - **Mute toggle** — `m` key (`ACT_MUTE` / `audio_toggle_mute`).
 - **Audio wired into the loop** — move/rotate blips on a successful
-  move/rotate; lock/clear/tetris cues distinguished after a hard drop or
+  move/rotate; lock/clear/quad cues distinguished after a hard drop or
   gravity lock (clear count, or a board-cell gain for a clear-less lock);
   level-up cue on a level tick; top-out sting on game over.
 
@@ -555,7 +628,7 @@ fix already shipped in cyrius-bb (and cyrius-doom v0.27.4).
   - `src/piece.cyr` — the seven tetrominoes in four rotation states each, packed SRS cell geometry (`piece_word` / `cell_x` / `cell_y`); pure, no allocation.
   - `src/board.cyr` — 10×20 grid: collision, lock-down, full-row detection, and bottom-up line-clear compaction.
   - `src/world.cyr` — game state + step: seedable LCG piece RNG, spawn/top-out, move, naïve rotate (no wall kicks yet), gravity, soft drop, lock→clear→score→spawn.
-  - `src/score.cyr` — guideline base scoring (Single/Double/Triple/Tetris = 100/300/500/800 × level) + level-per-10-lines.
+  - `src/score.cyr` — guideline base scoring (Single/Double/Triple/Quad = 100/300/500/800 × level) + level-per-10-lines.
   - `src/framebuf.cyr`, `src/render.cyr` — offscreen RGB surface + flat-cell renderer (placeholder per-type palette per ADR 0002) + PPM dump.
   - `src/input.cyr`, `src/tick.cyr`, `src/present.cyr` — raw-tty input (pure `poly_key_action` decoder + arrow keys), ~60 fps pacing, best-effort `/dev/fb0` blit.
   - `src/main.cyr` — interactive loop and a deterministic headless `<frames> [seed]` smoke mode (dumps a PPM, prints score/lines/level/state/cells).

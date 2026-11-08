@@ -12,13 +12,13 @@
 # changing direction or releasing resets it.
 #
 # Raw-tty constraint: a Linux raw terminal delivers a *byte stream* with no
-# key-release events, and the kernel's own key auto-repeat has a ~250 ms
-# initial gap before it streams. So "held" is inferred from a direction
-# byte arriving on a frame, not from a true key-down/up pair: a sustained
-# hold reads as press, a brief gap (one reset), then a steady stream that
-# this machine paces at DAS_RATE. The cadence is fully ours once the stream
-# is flowing; the one-frame initial-gap reset is the documented price of
-# the tty having no release event. (Same I/O surface as cyrius-bb/doom.)
+# key-release events, so "held" can only be inferred from a direction byte
+# arriving on a frame. Kernel key repeat sends those bytes every 2-6 frames
+# at typical rates of 10-30 per second, and a frame with no byte reads as a
+# release. So on a real tty each repeat byte is a fresh press and shifts once:
+# held movement runs at the kernel's repeat rate, and DAS_DELAY / DAS_RATE
+# only take effect when a direction arrives on every frame (the unit tests,
+# or a future key-state source). (Same I/O surface as cyrius-bb/doom.)
 
 enum DasConst {
     DAS_DELAY = 16;   # frames a direction must be held before auto-repeat (~0.27 s)

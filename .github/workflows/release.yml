@@ -39,12 +39,13 @@ jobs:
         run: |
           set -e
           # Pin from cyrius.cyml is the single source of truth (CLAUDE.md
-          # § Rules) — no version hardcoded here. The upstream installer
-          # fetches the prebuilt release (sha256-verified) into the versioned
+          # § Rules) — no version hardcoded here. The upstream installer (taken
+          # from that same tag, not a moving branch) fetches the prebuilt
+          # release (sha256-verified) into the versioned
           # $HOME/.cyrius/versions/<v>/ layout that `cyrius deps` resolves from.
           CYRIUS_VERSION="$(grep '^cyrius = ' cyrius.cyml | head -1 | sed 's/cyrius = "\(.*\)"/\1/')"
           echo "Installing Cyrius $CYRIUS_VERSION"
-          curl -sSf https://raw.githubusercontent.com/MacCracken/cyrius/main/scripts/install.sh | \
+          curl -sSf "https://raw.githubusercontent.com/MacCracken/cyrius/$CYRIUS_VERSION/scripts/install.sh" | \
             CYRIUS_VERSION="$CYRIUS_VERSION" sh
           echo "$HOME/.cyrius/bin" >> "$GITHUB_PATH"
 

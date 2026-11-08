@@ -12,8 +12,8 @@
 # standard). The published tables use screen-up +y; this module stores the
 # offsets already converted to the engine's row-down +y (row 0 = top), so a
 # caller adds (dx, dy) straight to the piece origin. ADR 0001 — every
-# mechanic traces to a documented public source; pin the reference table in
-# docs/standards/ alongside this module.
+# mechanic traces to a documented public source; the reference table is
+# docs/standards/srs-rotation.md.
 #
 # Encoding. Each (from->to) transition is five tests; each test is a signed
 # (dx, dy) offset in -2..+2, packed into one byte as ((dx+2)<<4)|(dy+2),

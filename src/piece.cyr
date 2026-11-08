@@ -12,14 +12,11 @@
 # Rotation ids: 0=spawn, 1=CW, 2=180, 3=CCW.
 #
 # Coordinates are the canonical Super Rotation System (SRS) spawn-and-kick
-# layout — the modern guideline standard. M1 rotates naively (no wall
-# kicks); the SRS kick tables layer on in M3 (see roadmap). Using the SRS
-# cell coordinates now means M3 only has to add the kick offsets, not
-# re-lay the pieces.
+# layout — the modern guideline standard. The kick offsets are in srs.cyr.
 #
 # Source: SRS piece geometry as documented in the falling-block guideline
-# (see docs/standards/ when the kick tables land in M3). ADR 0001 — every
-# mechanic traces to a documented public source.
+# (docs/standards/srs-rotation.md). ADR 0001 — every mechanic traces to a
+# documented public source.
 
 # Pack a cell's (x, y) into one byte: x in the high nibble, y in the low.
 fn pk(x, y): i64 { return (x << 4) | y; }

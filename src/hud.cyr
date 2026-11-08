@@ -163,9 +163,9 @@ fn hud_draw_text(f, x, y, s, scale, r, g, b): i64 {
     return 0;
 }
 
-# Left edge (px) of the HUD side panel: just right of the well. Parens
-# around the multiply are load-bearing — Cyrius mis-parses `a * ENUM + b`
-# (drops the multiply); see CLAUDE.md "mixed expressions require parens".
+# Left edge (px) of the HUD side panel: just right of the well. Parens around
+# the multiply are project convention (CLAUDE.md); early toolchains dropped the
+# multiply in `a * ENUM + b`.
 fn hud_panel_x(wd): i64 { return (board_w(world_board(wd)) * CELL) + 6; }
 
 # Draw piece type `t` in its spawn (rot 0) shape as small blocks in its own

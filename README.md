@@ -61,17 +61,16 @@ cyrius test                                          # run [build].test + tests/
 
 ## Status
 
-**0.5.0 — M4 audio pass.** The classic core (M1–M2) + the modern layer (M3:
-SRS kicks, 7-bag, hold, ghost, hard drop, multi-NEXT, T-spin/B2B/combo) + M4
-audio: original square-wave SFX cues (move/rotate, lock, line-clear, quad
-fanfare, level-up, top-out) routed through vani, with a mute toggle.
-Deterministic integer core, 253 headless assertions. See
-[`docs/development/roadmap.md`](docs/development/roadmap.md) for the milestone
-arc and [`docs/development/state.md`](docs/development/state.md) for live
-progress.
+The classic core (M1–M2) + the modern layer (M3: SRS kicks, 7-bag, hold, ghost,
+hard drop, multi-NEXT, T-spin/B2B/combo) + M4 audio: original square-wave SFX
+cues (move/rotate, lock, line-clear, quad fanfare, level-up, top-out) routed
+through vani, with a mute toggle. Deterministic integer core, tested headless.
+See [`docs/development/roadmap.md`](docs/development/roadmap.md) for the
+milestone arc and [`docs/development/state.md`](docs/development/state.md) for
+live progress.
 
 **Controls:** `a`/`d` or ←/→ move · `s` or ↓ soft drop · space hard drop ·
-`w`/↑ rotate CW · `z` rotate CCW · `c` hold · `m` mute · `q`/Esc quit.
+`w`/↑ rotate CW · `z` rotate CCW · `c` hold · `m` mute · `q`/Esc/Ctrl-C quit.
 
 ## License
 
