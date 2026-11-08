@@ -2,6 +2,54 @@
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.0] - 2026-11-08
+
+**Toolchain bump to Cyrius 6.7.9 + dependency refresh.** The first pin on the
+6.7.x minor. No source changes: the game plays exactly as 0.5.5 did, which the
+cross-toolchain determinism fingerprints below confirm. This cut takes the
+number the roadmap had reserved for M5 high-score persistence; M5 moves to
+v0.7.0, and M6 stays v0.9.0.
+
+### Changed
+
+- **Cyrius pin `6.6.20` → `6.7.9`.** `lib/` and `cyrius.lock` regenerated from a
+  clean `rm -rf lib` + `cyrius deps` — 28 files, the same set as 0.5.5,
+  `deps --verify` 28 / 0. No source edits needed.
+- **Re-vendored `vani-core` `1.2.9` → `1.2.10`** (`vendor/vani-core.cyr`) — the
+  release the 6.7.9 stdlib bundles, byte-identical to vani's
+  `dist/vani-core.cyr` at tag `1.2.10`. The one functional change is that the
+  PCM is opened `O_CLOEXEC`, so a spawned child cannot inherit it; polyomino
+  spawns no children, so it has no effect here.
+- **Earmarked M5 deps moved to the releases 6.7.9 bundles** (still commented
+  out): `sankoch` `2.8.1` → `2.8.3`, `sigil` `3.13.10` → `3.13.11`.
+- `docs/development/roadmap.md` (M5 → v0.7.0), `docs/development/state.md` and
+  `vendor/README.md` refreshed.
+
+### Verified
+
+- `cyrius build`: clean, no warnings. `CYRIUS_DCE=1` **80,808 B** and plain
+  175,016 B, both unchanged: the code segment grew 24 B (+8 B toolchain, +16 B
+  vani-core) and the page-aligned data segment absorbs it.
+- `cyrius test tests/cyrius-polyomino.tcyr`: **277 / 277**.
+- **Determinism across the bump:** the headless smoke over five seed / frame
+  pairs prints identical score / lines / level / state / cells and writes
+  byte-identical PPMs under 6.6.20 + vani 1.2.9 and 6.7.9 + vani 1.2.10, in
+  plain and DCE builds alike.
+- `cyrius lint` (CI's hard-gate form, all of `src/`) and `cyrius fmt --check`
+  (src, tests, benches): clean. `cyrius vet`: 17 deps, 0 missing, 1 untrusted
+  (the vendored vani-core). Builds for x86_64, `--aarch64` and `--agnos`; bench
+  + fuzz stubs build and run.
+- Bench over 4 interleaved pairs, same machine: flat. 6.6.20 → 6.7.9:
+  `piece_word` 24–25 → 24 ns, `board_collides` 51 → 50–52 ns,
+  `board_clear_lines` 174–176 → 174–180 ns, `render_world` 377–380 → 376–378
+  µs/frame.
+- **vani's open, against a FIFO** (`_audio_open_pcm` built on 6.7.9): no reader
+  returns `-ENXIO` at once; with a reader the fd comes back write-only with
+  `O_NONBLOCK` cleared and `FD_CLOEXEC` set. **Not exercised on the sound card:**
+  the build session's device ACL refused the node (`-EACCES`), where `audio_init`
+  returned in 64 µs with `audio_dev` 0. The busy-device and by-ear checks are
+  still pending a console session.
+
 ## [0.5.5] - 2026-11-08
 
 **Sound actually plays, and the toolchain moves to Cyrius 6.6.20.** The audio

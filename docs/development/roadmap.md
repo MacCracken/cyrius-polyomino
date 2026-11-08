@@ -62,7 +62,7 @@ detail in [`CHANGELOG.md`](../../CHANGELOG.md); live surface in [`state.md`](sta
 - **Optional user `.ogg` music** slot (`~/.cyrius-polyomino/music/`, silent by
   default) — deferred from M4; needs an Ogg decoder.
 
-### M5 — High-score persistence (v0.6.0)
+### M5 — High-score persistence (v0.7.0)
 
 - `src/save.cyr` — high-score table at `~/.cyrius-polyomino/scores.cyb` (custom extension), **sankoch**-compressed + **sigil**-integrity-hashed (don't self-roll crypto/compression — [ADR 0003](../adr/0003-self-rolled-primitives.md) retains these as real deps)
 - Top-10 persistent scores with player initials

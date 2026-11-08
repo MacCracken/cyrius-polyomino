@@ -5,7 +5,7 @@ description = "An original falling-block puzzle in Cyrius — generic homage to 
 license = "GPL-3.0-only"
 repository = "https://github.com/MacCracken/cyrius-polyomino"
 language = "cyrius"
-cyrius = "6.6.20"
+cyrius = "6.7.9"
 
 [build]
 entry = "src/main.cyr"
@@ -31,15 +31,15 @@ stdlib = ["string", "alloc", "fmt", "io", "fs", "str", "vec", "syscalls", "args"
 # the build stays warning-free (an unused dep just adds link warnings + weight).
 #
 # sankoch — high-score file compression (M5). sigil — high-score integrity hash (M5).
-# Tags track the releases the pinned toolchain's stdlib bundles (6.6.20: sankoch
-# 2.8.1, sigil 3.13.10) — those bundled copies are an alternative to the git
+# Tags track the releases the pinned toolchain's stdlib bundles (6.7.9: sankoch
+# 2.8.3, sigil 3.13.11) — those bundled copies are an alternative to the git
 # deps; weigh the link weight of each when M5 wires them.
 # [deps.sankoch]
 # git = "https://github.com/MacCracken/sankoch.git"
-# tag = "2.8.1"
+# tag = "2.8.3"
 # modules = ["dist/sankoch.cyr"]
 #
 # [deps.sigil]
 # git = "https://github.com/MacCracken/sigil.git"
-# tag = "3.13.10"
+# tag = "3.13.11"
 # modules = ["dist/sigil.cyr"]

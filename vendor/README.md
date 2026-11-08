@@ -7,9 +7,9 @@ Third-party single-file snapshots that are **deliberately committed** (unlike
 
 - **Source**: [vani](https://github.com/MacCracken/vani) `dist/vani-core.cyr`
   (the `core` profile — the playback-only ALSA PCM shim: the `audio_*` API).
-- **Version**: 1.2.9 (pins cyrius 6.6.18; we build on 6.6.20) — byte-identical to
-  vani's committed `dist/vani-core.cyr` at tag `1.2.9` (sha256 `8e9a242d…`), the
-  release the 6.6.20 stdlib bundles as `lib/vani.cyr` (full profile). The
+- **Version**: 1.2.10 (pins cyrius 6.7.5; we build on 6.7.9) — byte-identical to
+  vani's committed `dist/vani-core.cyr` at tag `1.2.10` (sha256 `4a96c1b8…`), the
+  release the 6.7.9 stdlib bundles as `lib/vani.cyr` (full profile). The
   `audio_*` calls polyomino makes keep their signatures and plain-`i64` returns,
   and `audio_open_playback` still returns 0 on failure; vani 1.2.3's Result
   value-form break touches only the `vani_*` layer, which polyomino never calls.
