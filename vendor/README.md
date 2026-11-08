@@ -7,9 +7,9 @@ Third-party single-file snapshots that are **deliberately committed** (unlike
 
 - **Source**: [vani](https://github.com/MacCracken/vani) `dist/vani-core.cyr`
   (the `core` profile — the playback-only ALSA PCM shim: the `audio_*` API).
-- **Version**: 1.2.5 (pins cyrius 6.6.2; we build on 6.6.6) — byte-identical to
-  vani's committed `dist/vani-core.cyr` at tag `1.2.5` (sha256 `28a8c870…`), the
-  release the 6.6.6 stdlib bundles as `lib/vani.cyr` (full profile). The
+- **Version**: 1.2.9 (pins cyrius 6.6.18; we build on 6.6.20) — byte-identical to
+  vani's committed `dist/vani-core.cyr` at tag `1.2.9` (sha256 `8e9a242d…`), the
+  release the 6.6.20 stdlib bundles as `lib/vani.cyr` (full profile). The
   `audio_*` calls polyomino makes keep their signatures and plain-`i64` returns,
   and `audio_open_playback` still returns 0 on failure; vani 1.2.3's Result
   value-form break touches only the `vani_*` layer, which polyomino never calls.
@@ -25,12 +25,11 @@ Third-party single-file snapshots that are **deliberately committed** (unlike
   `audio_prepare`, `audio_write`, `audio_drain`, `audio_close`, and `audio_fd`
   plus the `SNDRV_PCM_IOCTL_SW_PARAMS` / `AlsaSwParamsLayout` constants for the
   silence-filled sw params (`audio_set_sw_silence` — vani's
-  `audio_set_sw_params` pins the silence fields to 0), and vani's private
-  `_audio_devpath`, so the busy-device probe (`audio_probe_playback`) opens,
-  `O_NONBLOCK`, exactly the node `audio_open_playback` will. A refresh must
-  keep those names. The probe exists because vani's open is a blocking
-  `O_WRONLY` (as of 1.2.5) that sleeps on a PCM another app holds; a vani
-  whose open fails fast on a busy device makes it redundant.
+  `audio_set_sw_params` pins the silence fields to 0). A refresh must keep
+  those names, and must stay at vani ≥ 1.2.6: through 1.2.5
+  `audio_open_playback` was a blocking `O_WRONLY` that slept on a PCM another
+  app held, and `audio_init` now relies on that open failing fast rather than
+  guarding against it.
   `include "vendor/vani-core.cyr"` sits before `src/synth.cyr` in
   `src/main.cyr` and the test suite.
 

@@ -2,9 +2,15 @@
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.5.5] - 2026-11-08
 
-**Sound actually plays.** Hardware probing on the dev box (card 1, the ALC897)
+**Sound actually plays, and the toolchain moves to Cyrius 6.6.20.** The audio
+work below is the only change to how the game behaves; the toolchain and
+dependency bump leaves it as it was, which the cross-toolchain determinism
+fingerprints under *Verified* confirm. (0.6.0 stays reserved for the M5
+high-score milestone.)
+
+**The audio fix.** Hardware probing on the dev box (card 1, the ALC897)
 confirmed the M4 audio path has been silent since 0.5.0, behind unchecked
 return values. The fix renders in the device's own format, keeps the stream
 recoverable between cues, and fails silent rather than broken — or hung.
@@ -49,22 +55,39 @@ recoverable between cues, and fails silent rather than broken — or hung.
   period / buffer (sound plays; long cues can stall the loop; no silence
   fill); one that refuses the format — or the prepare — is closed and
   `audio_dev` stays 0, so no write reaches an unconfigured PCM.
-- **No startup hang on a busy device.** vani's `audio_open_playback` opens the
-  PCM `O_WRONLY` without `O_NONBLOCK`, and the kernel's `snd_pcm_open` answers
-  a busy PCM by sleeping until the holder closes it. Card 1's analog PCM has
-  one subdevice, so any holder made it busy — PipeWire / wireplumber (which
-  get the device ACL with the console session) or any other app — and the
-  game hung before its first frame instead of running silent. `audio_init`
-  now probes first: `audio_probe_playback` opens the same node (built by
-  vani's own `_audio_devpath`) `O_WRONLY | O_NONBLOCK`, which fails at once
-  with `-EBUSY`, then closes it; any failure (`-EBUSY`, `-ENOENT`, `-EACCES`)
-  leaves `audio_dev` 0 before vani's blocking open is reached. vani cannot
-  adopt an fd, so it reopens the node: a device grabbed in that window can
-  still block the open — an accepted race. On agnos the probe always passes
-  (`#ifdef`'d): vani claims a kernel stream slot there, not an ALSA node.
+- **No startup hang on a busy device.** vani through 1.2.5 opened the PCM
+  `O_WRONLY` without `O_NONBLOCK`, and the kernel's `snd_pcm_open` answers a
+  busy PCM by sleeping until the holder closes it. Card 1's analog PCM has one
+  subdevice, so any holder made it busy — PipeWire / wireplumber (which get the
+  device ACL with the console session) or any other app — and the game hung
+  before its first frame instead of running silent. vani 1.2.6 made that open
+  fail at once, and this cut's re-vendor picks it up (see *Changed*):
+  `audio_open_playback` returns 0 on `-EBUSY` as on `-ENOENT` / `-EACCES`, and
+  `audio_init` leaves `audio_dev` 0. An interim guard during development
+  (`audio_probe_playback`, a non-blocking open-and-close ahead of vani's open)
+  was removed before this release, which also closes its reopen race.
 
 ### Changed
 
+- **Cyrius pin `6.6.6` → `6.6.20`.** `lib/` and `cyrius.lock` regenerated from a
+  clean `rm -rf lib` + `cyrius deps` — 28 files (new: `lib/poison.cyr`),
+  `deps --verify` 28 / 0. No source edits needed. 6.6.20 fixes the
+  `for > while > for` `continue` miscompile that 6.6.6 still had and removes the
+  8-`continue` cap; neither could reach polyomino, whose only `continue` is in
+  `input_poll`'s single, un-nested `while`.
+- **Re-vendored `vani-core` `1.2.5` → `1.2.9`** (`vendor/vani-core.cyr`) — the
+  release the 6.6.20 stdlib bundles, deliberately not vani's newest (1.2.10);
+  byte-identical to vani's `dist/vani-core.cyr` at tag `1.2.9`. Every name
+  polyomino uses is unchanged. One behaviour change reaches it: since vani
+  1.2.6 `audio_open_playback` fails at once on a busy PCM instead of sleeping,
+  then hands back a blocking fd, which is now what keeps a busy device from
+  hanging startup. The rest is an internal `_audio_ioctl` wrapper (same syscall
+  on Linux) and a `# Requires` include block naming `syscalls` / `alloc` /
+  `string`, all already in the manifest.
+- **Earmarked M5 deps moved to the releases 6.6.20 bundles** (still commented
+  out): `sankoch` `2.8.0` → `2.8.1`, `sigil` `3.13.2` → `3.13.10`. The manifest
+  had tracked each repo's newest tag; it now tracks the bundled ones.
+- `vendor/README.md` provenance and `docs/development/state.md` refreshed.
 - **Render buffer `SFX_MAX_BYTES` 4096 → 65536** (new `SFX_MAX_FRAMES` 16384),
   sized for the longest cue at 48 kHz S16 stereo (the 320 ms top-out sting,
   61,440 B). Still heap-allocated, so the CI gate against ≥ 64 KB stack
@@ -78,6 +101,37 @@ recoverable between cues, and fails silent rather than broken — or hung.
   `vendor/README.md` now lists the vani calls polyomino makes.
 
 ### Verified
+
+The toolchain and dependency bump (6.6.6 + vani 1.2.5 → 6.6.20 + vani 1.2.9):
+
+- `cyrius build`: clean, no warnings. `CYRIUS_DCE=1`: 75,376 → **80,808 B**
+  x86_64 static ELF (+5,416 B toolchain, +16 B vani-core). Plain build
+  153,200 → 175,016 B. Dropping the interim probe shrinks the code segment
+  256 B but not the file, whose data segment stays page-aligned.
+- `cyrius test tests/cyrius-polyomino.tcyr`: **277 / 277**. The two assertions
+  that covered the probe now cover `audio_open_playback` returning null for an
+  absent PCM and an unencodable card; mutating either return fails exactly its
+  assertion.
+- **Determinism across the bump:** the headless smoke over five seed / frame
+  pairs prints identical score / lines / level / state / cells and writes
+  byte-identical PPMs under both toolchains, in plain and DCE builds alike.
+- `cyrius lint` (CI's hard-gate form, all of `src/`) and `cyrius fmt --check`
+  (src, tests, benches): clean. `cyrius vet`: 17 deps, 0 missing, 1 untrusted
+  (the vendored vani-core, as on 6.6.6). Builds for x86_64, `--aarch64` and
+  `--agnos`; bench + fuzz stubs build and run.
+- Bench over 4 interleaved pairs, same machine: flat. 6.6.6 → 6.6.20:
+  `piece_word` 24 → 24–25 ns, `board_collides` 49–51 → 49–50 ns,
+  `board_clear_lines` 172–177 → 171–175 ns (one 234 ns outlier on 6.6.6),
+  `render_world` 369–393 → 367–376 µs/frame.
+- **vani's new open, against a FIFO** (`_audio_open_pcm` built on 6.6.20): no
+  reader returns `-ENXIO` at once instead of sleeping; with a reader the fd comes
+  back write-only with `O_NONBLOCK` cleared. **Not exercised on the sound card:**
+  the build session's device ACL refused the node (`-EACCES`, the same with the
+  vani 1.2.5 control), so the busy-device and mechanics checks below were not
+  repeated on 1.2.9. That refusal does exercise the failure path: `audio_init`,
+  through vani's open alone, returned in 63 µs with `audio_dev` 0.
+
+The audio fix, on 6.6.6 + vani 1.2.5, with the interim busy-device probe:
 
 - **Silent hardware probe** (card 1, no PCM written): `audio_set_params(11025,
   1, 8)` → `-22`; `(48000, 2, 16)` → `0`. `HW_REFINE`: formats S16_LE + S32_LE
