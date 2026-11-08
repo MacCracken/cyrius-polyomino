@@ -182,6 +182,7 @@ fn audio_init(): i64 {
     return 0;
 }
 
+# Current mute state (1 = muted).
 fn audio_is_muted(): i64 { return audio_muted; }
 
 # Flip mute; returns the new state (1 = muted).
@@ -210,6 +211,7 @@ fn audio_play(ev): i64 {
     return w;
 }
 
+# Drain and close the device, leaving audio_dev 0. No-op with no device.
 fn audio_shutdown(): i64 {
     if (audio_dev != 0) {
         audio_drain(audio_dev);

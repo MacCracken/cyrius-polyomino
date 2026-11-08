@@ -26,8 +26,11 @@ fn type_rgb(t): i64 {
     return (230 << 16) | (130 << 8) | 50;                   # L — orange
 }
 
+# Red channel (0..255) of a packed 0xRRGGBB colour.
 fn rgb_r(c): i64 { return (c >> 16) & 255; }
+# Green channel (0..255) of a packed 0xRRGGBB colour.
 fn rgb_g(c): i64 { return (c >> 8) & 255; }
+# Blue channel (0..255) of a packed 0xRRGGBB colour.
 fn rgb_b(c): i64 { return c & 255; }
 
 # A dimmed shade of a packed colour (~quarter brightness) for the ghost piece.

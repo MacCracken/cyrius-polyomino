@@ -1,10 +1,12 @@
 # cyrius-polyomino fuzz harness
 
+# Fuzz target stub: accepts any input and does nothing yet.
 fn fuzz_main(data, len) {
     if (len == 0) { return 0; }
     return 0;
 }
 
+# Run the fuzz target once on a fixed input.
 fn main() {
     alloc_init();
     fuzz_main("test", 4);

@@ -21,8 +21,10 @@
 # (see docs/standards/ when the kick tables land in M3). ADR 0001 — every
 # mechanic traces to a documented public source.
 
+# Pack a cell's (x, y) into one byte: x in the high nibble, y in the low.
 fn pk(x, y): i64 { return (x << 4) | y; }
 
+# Join four packed cells into a piece word, cell 0 in the lowest byte.
 fn word4(a, b, c, d): i64 { return a | (b << 8) | (c << 16) | (d << 24); }
 
 # Packed 4-cell word for tetromino `t` in rotation `r`.
@@ -69,6 +71,8 @@ fn piece_word(t, r): i64 {
 
 # Cell k (0..3) of a packed word: x is the high nibble, y the low nibble.
 fn cell_x(word, k): i64 { return (word >> (k * 8 + 4)) & 15; }
+# Cell k's y coordinate, the low nibble of its byte (see cell_x).
 fn cell_y(word, k): i64 { return (word >> (k * 8)) & 15; }
 
+# Number of tetromino types; valid types are 0 through 6.
 fn piece_count(): i64 { return 7; }

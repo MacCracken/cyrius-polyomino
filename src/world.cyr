@@ -118,21 +118,37 @@ fn world_draw_next(wd): i64 {
 
 # --- accessors ---------------------------------------------------------
 
+# The world's board handle.
 fn world_board(wd): i64 { return load64(wd + WO_BOARD); }
+# Active piece type (0..6).
 fn world_cur_type(wd): i64 { return load64(wd + WO_CUR_TYPE); }
+# Active piece rotation state (0..3).
 fn world_cur_rot(wd): i64 { return load64(wd + WO_CUR_ROT); }
+# Active piece origin column; can be negative at the left wall.
 fn world_cur_x(wd): i64 { return load64(wd + WO_CUR_X); }
+# Active piece origin row.
 fn world_cur_y(wd): i64 { return load64(wd + WO_CUR_Y); }
+# Type of the next piece to spawn.
 fn world_next(wd): i64 { return world_peek(wd, 0); }
+# Current score.
 fn world_score(wd): i64 { return load64(wd + WO_SCORE); }
+# Total lines cleared this game.
 fn world_lines(wd): i64 { return load64(wd + WO_LINES); }
+# Current level.
 fn world_level(wd): i64 { return load64(wd + WO_LEVEL); }
+# Game state: WS_PLAYING or WS_GAME_OVER.
 fn world_state(wd): i64 { return load64(wd + WO_STATE); }
+# Lines cleared by the most recent lock.
 fn world_last_cleared(wd): i64 { return load64(wd + WO_LAST_CLEARED); }
+# Held piece type, or HOLD_EMPTY if none is stashed.
 fn world_hold_type(wd): i64 { return load64(wd + WO_HOLD); }
+# 1 once hold has been used for the current piece, else 0.
 fn world_hold_used(wd): i64 { return load64(wd + WO_HOLD_USED); }
+# 1 while a back-to-back chain is active (last clear was difficult).
 fn world_b2b(wd): i64 { return load64(wd + WO_B2B); }
+# Consecutive line-clear chain: -1 = none, 0 = first clear.
 fn world_combo(wd): i64 { return load64(wd + WO_COMBO); }
+# T-spin kind of the most recent lock (0, 1, or 2).
 fn world_last_tspin(wd): i64 { return load64(wd + WO_LAST_TSPIN); }
 
 # --- lifecycle ---------------------------------------------------------

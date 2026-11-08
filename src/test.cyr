@@ -3,6 +3,7 @@
 
 include "lib/syscalls.cyr"
 
+# Placeholder for [build].test; the real suite is tests/cyrius-polyomino.tcyr.
 fn main() {
     return 0;
 }

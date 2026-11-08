@@ -19,6 +19,7 @@ enum BoardField {
     BD_SIZE = 24;
 }
 
+# Allocate a w x h board with every cell empty (0).
 fn board_new(w, h): i64 {
     var b = alloc(BD_SIZE);
     store64(b + BD_W, w);
@@ -34,12 +35,16 @@ fn board_new(w, h): i64 {
     return b;
 }
 
+# Board width in cells.
 fn board_w(b): i64 { return load64(b + BD_W); }
+# Board height in cells.
 fn board_h(b): i64 { return load64(b + BD_H); }
+# Base address of the cell bytes, stored row-major (r * width + c).
 fn board_cells(b): i64 { return load64(b + BD_CELLS); }
 
 # Cell value at (col, row). Caller guarantees in-bounds.
 fn board_at(b, c, r): i64 { return load8(load64(b + BD_CELLS) + r * load64(b + BD_W) + c); }
+# Store value v in the cell at (col, row). Caller guarantees in-bounds.
 fn board_set(b, c, r, v): i64 {
     store8(load64(b + BD_CELLS) + r * load64(b + BD_W) + c, v);
     return 0;
@@ -115,6 +120,7 @@ fn board_row_full(b, r): i64 {
     return 1;
 }
 
+# Copy row src over row dst.
 fn board_copy_row(b, src, dst): i64 {
     var w = load64(b + BD_W);
     var cells = load64(b + BD_CELLS);
@@ -122,6 +128,7 @@ fn board_copy_row(b, src, dst): i64 {
     return 0;
 }
 
+# Empty every cell in row r.
 fn board_clear_row(b, r): i64 {
     var w = load64(b + BD_W);
     var base = load64(b + BD_CELLS) + r * w;

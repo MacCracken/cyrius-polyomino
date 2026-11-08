@@ -5,14 +5,15 @@
 
 ## Version
 
-**0.6.0 — toolchain bump to Cyrius 6.7.9 + dependency refresh** (cut
-2026-11-08). No source changes. Pins Cyrius `6.6.20 → 6.7.9`, the first pin on
-the 6.7.x minor (`lib/` + `cyrius.lock` regenerated clean), re-vendors
-vani-core `1.2.9 → 1.2.10`, and moves the earmarked M5 deps to the releases
-6.7.9 bundles (sankoch 2.8.3, sigil 3.13.11). Game behaviour is unchanged — the
-headless smoke's output and PPMs are byte-identical across the bump. This cut
-took the number the roadmap had reserved for M5, which moves to v0.7.0. (Prior:
-0.5.5 — audio fix, the M4 path had been silent (now 48 kHz S16_LE stereo on an
+**0.6.1 — toolchain bump to Cyrius 6.7.18 + every public function documented**
+(cut 2026-11-08). Pins Cyrius `6.7.9 → 6.7.18` (`lib/` + `cyrius.lock`
+regenerated clean) and moves the earmarked M5 deps to their latest releases
+(sankoch 2.8.9, sigil 3.13.15, also what 6.7.18 bundles); vani-core was already
+latest at 1.2.10. The source gained 81 doc comments and no code, and
+`cyrius audit` now exits 0. Game behaviour is unchanged — the headless smoke's
+output and PPMs are byte-identical across the bump. (Prior: 0.6.0 — Cyrius
+6.6.20 → 6.7.9 + dependency refresh, taking the number M5 had reserved (M5 is
+now v0.7.0), 2026-11-08; 0.5.5 — audio fix, the M4 path had been silent (now 48 kHz S16_LE stereo on an
 explicit 32768-frame ring, silent rather than hung on a busy or refusing
 device) + Cyrius 6.6.6 → 6.6.20, 2026-11-08; 0.5.4 — Cyrius 6.6.2 → 6.6.6 +
 dependency refresh, 2026-09-26; 0.5.3 — Cyrius
@@ -24,11 +25,11 @@ cues routed to ALSA via vani's `audio_*` shim, vani **vendored** as a single
 file (`vendor/vani-core.cyr`, `core` profile) to avoid the ~4× git-tree bloat;
 0.4.0 — M3 modern guideline layer; 0.3.0 — M2 progression; 0.2.2/0.2.1 —
 input/geometry fixes; 0.2.0 — M1 playable core; 0.1.0 — scaffold.) The version
-files are bumped to 0.6.0; the git tag is the user's to create.
+files are bumped to 0.6.1; the git tag is the user's to create.
 
-- **DCE binary**: 80,808 B (x86_64, static, stripped) and plain build 175,016 B, both unchanged from 0.5.5: the code segment grew 24 B (+8 toolchain, +16 vani-core) and the page-aligned data segment absorbs it. Vendoring vani-core rather than git-resolving it avoids a ~4× blowup (488 KB) from vani's transitive tree.
-- **Tests**: 277 assertions, 0 failed (253 at 0.5.4; the audio fix added 24). fmt + lint + vet clean. `cyrius audit` still exits 1 on its docs sweep (81 undocumented public fns, unchanged since 6.6.6); CI does not gate on it.
-- **Benchmarks** (6.7.9): piece_word 24ns · board_collides 50–52ns · board_clear_lines 174–180ns · render_world 376–378µs/frame. Flat against 6.6.20 across four interleaved pairs. `bench-history.csv` last recorded 0.2.0; M4 audio is off the render hot path.
+- **DCE binary**: 80,832 B (x86_64, static, stripped), +24 B vs 0.6.0's 80,808 B. Plain build 179,136 B (0.6.0: 175,016 B). Vendoring vani-core rather than git-resolving it avoids a ~4× blowup (488 KB) from vani's transitive tree.
+- **Tests**: 277 assertions, 0 failed (253 at 0.5.4; the audio fix added 24). fmt + lint + vet clean, and `cyrius audit` exits 0 across fmt, lint, docs (0 undocumented public fns), tests and bench. CI does not run the audit, so a new public fn needs its comment on the line directly above `fn` by hand.
+- **Benchmarks** (6.7.18): piece_word 24–25ns · board_collides 52–53ns · board_clear_lines 182–184ns · render_world 387–392µs/frame. Flat against 6.7.9 across four interleaved pairs (both ran a few percent slower than at the 0.6.0 cut, so compare within a session). `bench-history.csv` last recorded 0.2.0; M4 audio is off the render hot path.
 - **Security**: P(-1) audit clean — 0 CRIT/HIGH/MED, 2 LOW fixed ([2026-05-26 audit](../audit/2026-05-26-audit.md)). M4 adds no external input surface (synth is pure; vani-core opens `/dev/snd` read-of-caps only on a real device).
 - **Deps**: bare stdlib (ten modules) + **vani-core 1.2.10 vendored** at `vendor/vani-core.cyr` (audio). sankoch / sigil re-wire at M5.
 - **Caveat**: the interactive loop + `/dev/fb0` present are confirmed running
@@ -45,9 +46,9 @@ files are bumped to 0.6.0; the git tag is the user's to create.
 
 ## Toolchain
 
-- **Cyrius pin**: `6.7.9` (in `cyrius.cyml [package].cyrius`) — bumped from 6.6.20 at the 0.6.0 cut; no source changes needed. The stdlib `lib/` is materialised by `cyrius deps`, not committed; `cyrius.lock` records the 28 resolved files plus a `cyrius 6.7.9` toolchain trailer.
+- **Cyrius pin**: `6.7.18` (in `cyrius.cyml [package].cyrius`) — bumped from 6.7.9 at the 0.6.1 cut; no code changes needed. The stdlib `lib/` is materialised by `cyrius deps`, not committed; `cyrius.lock` records the 28 resolved files plus a `cyrius 6.7.18` toolchain trailer.
 - **`continue` in loop nests**: no longer a constraint on this pin. 6.6.20 fixes the miscompile 6.6.6 still had (a `continue` in the innermost `for` of a `for > while > for` nest) and removes the 8-`continue` cap that 6.6.3 added. polyomino's only `continue` (`input_poll`) sits in a single un-nested `while` and was never affected. Do not pin below 6.6.20 without re-checking new nested `continue`s (see cyrius-doom's `docs/audit/2026-09-26-toolchain-6.6.6-nested-continue.md`).
-- **History**: 6.6.20 at 0.5.5; 6.6.6 at 0.5.4; 6.6.2 at 0.5.3 (Result value form); 6.3.5 at 0.5.1 (the `bench` harness became a manual include, so `tests/cyrius-polyomino.bcyr` and `benches/polyomino.bcyr` `include "lib/bench.cyr"` explicitly); 6.2.2 at 0.4.0; 6.0.1 before that.
+- **History**: 6.7.9 at 0.6.0; 6.6.20 at 0.5.5; 6.6.6 at 0.5.4; 6.6.2 at 0.5.3 (Result value form); 6.3.5 at 0.5.1 (the `bench` harness became a manual include, so `tests/cyrius-polyomino.bcyr` and `benches/polyomino.bcyr` `include "lib/bench.cyr"` explicitly); 6.2.2 at 0.4.0; 6.0.1 before that.
 
 ## Source
 
@@ -85,12 +86,14 @@ Direct (declared in `cyrius.cyml`): bare stdlib — `string, alloc, fmt, io, fs,
 str, vec, syscalls, args, assert` ([ADR 0003](../adr/0003-self-rolled-primitives.md)).
 
 External: **vani-core vendored** as a single file (`vendor/vani-core.cyr`,
-1.2.10 `core` profile, audio; the release the 6.7.9 stdlib bundles) rather than
+1.2.10 `core` profile, audio; its latest release, and what the 6.7.18 stdlib
+bundles) rather than
 a git dep — see `vendor/README.md` for why (transitive-tree bloat) and how to
 refresh.
 
-Earmarked (commented out until their milestone): `sankoch` 2.8.3 + `sigil`
-3.13.11 (M5 high-score save; tags track the releases the pinned stdlib bundles).
+Earmarked (commented out until their milestone): `sankoch` 2.8.9 + `sigil`
+3.13.15 (M5 high-score save; each repo's latest release, also what the pinned
+stdlib bundles).
 Those bundled copies are an alternative to the git deps for M5 to weigh.
 
 ## Consumers
@@ -119,7 +122,7 @@ See [`roadmap.md`](roadmap.md). Immediate sequence:
    PCM (`/proc/asound/card1/pcm0p/sub0/status` not `closed` — e.g. PipeWire
    playing another app's audio): a busy device is now skipped, not waited on.
    vani's open is checked against a FIFO (fails fast, blocking fd) but not yet
-   on the card: the 0.5.5 and 0.6.0 build sessions had no device ACL
+   on the card: the 0.5.5, 0.6.0 and 0.6.1 build sessions had no device ACL
    (`-EACCES`).
 2. **M5 — high-score persistence** (v0.7.0): `src/save.cyr` — top-10 table at
    `~/.cyrius-polyomino/scores.cyb`, sankoch-compressed + sigil-hashed, with

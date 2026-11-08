@@ -11,6 +11,7 @@ enum TickConst {
     FRAME_NS = 16666667;
 }
 
+# Sleep for one frame (FRAME_NS, about 1/60 s).
 fn frame_sleep(): i64 {
     var ts[16];
     store64(&ts, 0);

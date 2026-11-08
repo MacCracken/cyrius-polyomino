@@ -36,6 +36,7 @@ enum GameConst {
     DEFAULT_SEED = 2463534242;
 }
 
+# A new world on an empty standard-size board, seeded with `seed`.
 fn build_world(seed): i64 {
     var b = board_new(BOARD_W, BOARD_H);
     return world_new(b, seed);
@@ -208,6 +209,7 @@ fn run_interactive(seed): i64 {
     return 0;
 }
 
+# Headless smoke when given `<frames> [seed]` arguments, otherwise play.
 fn main(): i64 {
     alloc_init();
     args_init();

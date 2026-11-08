@@ -36,8 +36,10 @@ fn srs_w5(x0, y0, x1, y1, x2, y2, x3, y3, x4, y4): i64 {
 
 # Extract test t's dx / dy (board space) from a transition word.
 fn srs_dx(word, t): i64 { return ((word >> (t * 8 + 4)) & 15) - 2; }
+# Test t's y offset, -2..2, from a transition word (see srs_dx).
 fn srs_dy(word, t): i64 { return ((word >> (t * 8)) & 15) - 2; }
 
+# Number of kick tests tried for each rotation.
 fn srs_test_count(): i64 { return 5; }
 
 # Transition id (0..7) for a rotation from `from` to `to` (adjacent states).

@@ -2,6 +2,55 @@
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.1] - 2026-11-08
+
+**Toolchain bump to Cyrius 6.7.18, and every public function documented.** The
+game plays exactly as 0.6.0 did, which the cross-toolchain determinism
+fingerprints below confirm. `cyrius audit` now exits 0.
+
+### Changed
+
+- **Cyrius pin `6.7.9` → `6.7.18`.** `lib/` and `cyrius.lock` regenerated from a
+  clean `rm -rf lib` + `cyrius deps` — 28 files, the same set as 0.6.0,
+  `deps --verify` 28 / 0. No code edits needed.
+- **Earmarked M5 deps moved to their latest releases** (still commented out):
+  `sankoch` `2.8.3` → `2.8.9`, `sigil` `3.13.11` → `3.13.15`. These are also the
+  versions 6.7.18 bundles.
+- **`vani-core` stays at `1.2.10`**: already vani's latest release and the one
+  6.7.18 bundles, so `vendor/vani-core.cyr` is untouched.
+- **Doc comments on all 81 public functions `cyrius audit` flagged** — 51 in
+  `src/`, 30 in `tests/` and `benches/`. A public function counts as documented
+  when a comment sits on the line directly above its `fn`. Comments only: no
+  code changed.
+- `docs/development/state.md` and `vendor/README.md` refreshed.
+
+### Verified
+
+- `cyrius build`: clean, no warnings. `CYRIUS_DCE=1`: 80,808 → **80,832 B**
+  x86_64 static ELF. Plain build 175,016 → 179,136 B.
+- `cyrius test tests/cyrius-polyomino.tcyr`: **277 / 277**.
+- **Determinism across the bump:** the headless smoke over five seed / frame
+  pairs prints identical score / lines / level / state / cells and writes
+  byte-identical PPMs under 6.7.9 and 6.7.18, in plain and DCE builds alike.
+- **The doc pass changed no code:** the `src` / `tests` / `benches` diff is 81
+  added lines, every one a comment, and 0 removed. The plain, DCE, `--aarch64`,
+  `--agnos`, test, fuzz and bench builds are each byte-identical before and
+  after it.
+- `cyrius audit`: **exit 0**, with fmt, lint, docs (0 undocumented), tests and
+  bench all passing. `cyrius lint` (CI's hard-gate form) and `cyrius fmt
+  --check`: clean. `cyrius vet`: 17 deps, 0 missing, 1 untrusted (the vendored
+  vani-core).
+- Bench over 4 interleaved pairs, same machine: flat. 6.7.9 → 6.7.18:
+  `piece_word` 25 → 24–25 ns, `board_collides` 53 → 52–53 ns,
+  `board_clear_lines` 183–184 → 182–184 ns, `render_world` 388–393 → 387–392
+  µs/frame.
+- **vani's open, against a FIFO** (`_audio_open_pcm` built on 6.7.18): no reader
+  returns `-ENXIO` at once; with a reader the fd comes back write-only with
+  `O_NONBLOCK` cleared and `FD_CLOEXEC` set. **Not exercised on the sound card:**
+  the build session's device ACL refused the node (`-EACCES`), where `audio_init`
+  returned in 63 µs with `audio_dev` 0. The busy-device and by-ear checks are
+  still pending a console session.
+
 ## [0.6.0] - 2026-11-08
 
 **Toolchain bump to Cyrius 6.7.9 + dependency refresh.** The first pin on the

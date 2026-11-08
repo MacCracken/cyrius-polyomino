@@ -19,6 +19,7 @@ include "src/das.cyr"
 
 # --- helpers -----------------------------------------------------------
 
+# Fill every cell of row r.
 fn t_fill_row_full(b, r): i64 {
     var c = 0;
     while (c < board_w(b)) {
@@ -28,6 +29,7 @@ fn t_fill_row_full(b, r): i64 {
     return 0;
 }
 
+# Fill row r except for columns gap1 and gap2.
 fn t_fill_row_except(b, r, gap1, gap2): i64 {
     var c = 0;
     while (c < board_w(b)) {
@@ -52,6 +54,7 @@ fn t_force(wd, t, rot, x, y): i64 {
 
 # --- piece -------------------------------------------------------------
 
+# Piece geometry: type count, cell packing, and per-rotation cells.
 fn test_piece() {
     test_group("piece");
     assert_eq(piece_count(), 7, "seven tetrominoes");
@@ -112,6 +115,7 @@ fn test_piece() {
 
 # --- board -------------------------------------------------------------
 
+# Board: dimensions, collision, locking, and line clearing.
 fn test_board() {
     test_group("board");
     var b = board_new(10, 20);
@@ -172,6 +176,7 @@ fn test_board() {
 
 # --- rng ---------------------------------------------------------------
 
+# RNG: LCG determinism and 7-bag permutations across bags.
 fn test_rng() {
     test_group("rng");
     assert_eq(rng_next_state(123), rng_next_state(123), "LCG deterministic");
@@ -236,6 +241,7 @@ fn test_rng() {
 
 # --- world -------------------------------------------------------------
 
+# A new world: playing state, zeroed counters, and spawn position.
 fn test_world_new() {
     test_group("world new");
     var b = board_new(10, 20);
@@ -253,6 +259,7 @@ fn test_world_new() {
     return 0;
 }
 
+# Horizontal moves, stopping at both walls.
 fn test_world_move() {
     test_group("world move");
     var b = board_new(10, 20);
@@ -278,6 +285,7 @@ fn test_world_move() {
     return 0;
 }
 
+# Rotation both ways, wrapping through the states, and a floor kick.
 fn test_world_rotate() {
     test_group("world rotate");
     var b = board_new(10, 20);
@@ -304,6 +312,7 @@ fn test_world_rotate() {
 
 # --- SRS wall kicks ----------------------------------------------------
 
+# SRS: offset decoding, transition ids, kicks, and a boxed-in failure.
 fn test_srs() {
     test_group("srs");
     # offset pack/unpack round-trips across the signed -2..2 range
@@ -370,6 +379,7 @@ fn test_srs() {
     return 0;
 }
 
+# Gravity drops the piece, then locks it and spawns the next.
 fn test_world_gravity() {
     test_group("world gravity");
     var b = board_new(10, 20);
@@ -386,6 +396,7 @@ fn test_world_gravity() {
     return 0;
 }
 
+# A lock that completes two rows clears them and scores a double.
 fn test_world_clear() {
     test_group("world clear");
     # Two rows full except cols 4,5 — an O dropped there completes both.
@@ -402,6 +413,7 @@ fn test_world_clear() {
     return 0;
 }
 
+# Spawning into a full top row, and stacking up to top-out.
 fn test_world_topout() {
     test_group("world topout");
     var b = board_new(10, 20);
@@ -424,6 +436,7 @@ fn test_world_topout() {
 
 # --- hard drop ---------------------------------------------------------
 
+# Hard drop: immediate lock, two points per cell, and line clears.
 fn test_world_harddrop() {
     test_group("world harddrop");
     var b = board_new(10, 20);
@@ -447,6 +460,7 @@ fn test_world_harddrop() {
 
 # --- hold --------------------------------------------------------------
 
+# Hold: first stash, the one-swap limit, swapping, and re-arming on lock.
 fn test_world_hold() {
     test_group("world hold");
     var b = board_new(10, 20);
@@ -483,6 +497,7 @@ fn test_world_hold() {
 
 # --- score -------------------------------------------------------------
 
+# Score helpers: line table, level steps, T-spin base, difficulty, and combo.
 fn test_score() {
     test_group("score");
     assert_eq(score_for_lines(0, 0), 0, "no lines, no points");
@@ -519,6 +534,7 @@ fn test_score() {
 
 # --- scoring extensions: combo / back-to-back / T-spin ------------------
 
+# In-game scoring: combo, back-to-back, and T-spin.
 fn test_world_scoring() {
     test_group("world scoring");
 
@@ -603,6 +619,7 @@ fn test_world_scoring() {
 
 # --- render ------------------------------------------------------------
 
+# Render: surface pixels, clipping, cell colours, and the ghost piece.
 fn test_render() {
     test_group("render");
     var f = fb_new(24, 24);
@@ -667,6 +684,7 @@ fn t_frame_faults(buf, n, amp): i64 {
     return bad;
 }
 
+# Synth: 48 kHz format, timing, decay, byte order, and stereo symmetry.
 fn test_synth() {
     test_group("synth");
     # the device's own format: the probed codec rejects 11025 Hz 8-bit mono
@@ -699,6 +717,7 @@ fn test_synth() {
     return 0;
 }
 
+# Audio: cue lengths, buffer sizing, retry policy, failed opens, and mute.
 fn test_audio() {
     test_group("audio");
     var abuf = alloc(SFX_MAX_BYTES);
@@ -749,6 +768,7 @@ fn test_audio() {
 
 # --- input -------------------------------------------------------------
 
+# Input: key decoding for each action.
 fn test_input() {
     test_group("input");
     assert_eq(poly_key_action(97), ACT_LEFT, "a -> left");
@@ -766,6 +786,7 @@ fn test_input() {
 
 # --- gravity curve -----------------------------------------------------
 
+# Gravity curve: frames per cell by level, clamped at the ends.
 fn test_gravity() {
     test_group("gravity");
     assert_eq(gravity_frames(0), 48, "level 0 = 48 frames/cell");
@@ -791,6 +812,7 @@ fn test_gravity() {
 
 # --- world tick (gravity timing + lock delay + soft drop) --------------
 
+# Real-time tick: gravity timing, lock delay, and soft drop.
 fn test_world_tick() {
     test_group("world tick");
     var b = board_new(10, 20);
@@ -844,6 +866,7 @@ fn test_world_tick() {
 
 # --- DAS ---------------------------------------------------------------
 
+# DAS: first shift, charge delay, auto-repeat, release, and reversal.
 fn test_das() {
     test_group("das");
     var d = das_new();
@@ -866,6 +889,7 @@ fn test_das() {
 
 # --- HUD ---------------------------------------------------------------
 
+# HUD: digit glyphs, piece previews, side-panel layout, and the HOLD slot.
 fn test_hud() {
     test_group("hud");
     hud_init();
@@ -916,6 +940,7 @@ fn test_hud() {
     return 0;
 }
 
+# Run every test group; the exit status comes from assert_summary.
 fn main() {
     alloc_init();
     test_piece();

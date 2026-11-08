@@ -117,6 +117,7 @@ fn fb_present_blit(f): i64 {
     return 0;
 }
 
+# Close /dev/fb0 if it is open. Safe to call when it never was.
 fn fb_present_close(): i64 {
     if (present_fd >= 0) {
         file_close(present_fd);

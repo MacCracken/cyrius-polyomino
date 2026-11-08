@@ -15,6 +15,7 @@ enum FbField {
     FB_SIZE = 24;
 }
 
+# Allocate a w x h offscreen surface, 3 bytes (RGB) per pixel.
 fn fb_new(w, h): i64 {
     var f = alloc(FB_SIZE);
     store64(f + FB_W, w);
@@ -23,8 +24,11 @@ fn fb_new(w, h): i64 {
     return f;
 }
 
+# Surface width in pixels.
 fn fb_w(f): i64 { return load64(f + FB_W); }
+# Surface height in pixels.
 fn fb_h(f): i64 { return load64(f + FB_H); }
+# Base address of the surface's RGB pixel bytes.
 fn fb_pixels(f): i64 { return load64(f + FB_PX); }
 
 # Set one pixel (bounds-checked; out-of-range is a silent no-op).
@@ -78,6 +82,7 @@ fn fb_fill_rect(f, x, y, w, h, r, g, b): i64 {
     return 0;
 }
 
+# Fill the whole surface with colour (r, g, b).
 fn fb_clear(f, r, g, b): i64 {
     fb_fill_rect(f, 0, 0, load64(f + FB_W), load64(f + FB_H), r, g, b);
     return 0;

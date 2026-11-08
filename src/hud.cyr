@@ -22,6 +22,7 @@ fn glyph(r0, r1, r2, r3, r4): i64 {
     return (r0 << 12) | (r1 << 9) | (r2 << 6) | (r3 << 3) | r4;
 }
 
+# Build the 3x5 digit and letter glyph tables; call once before drawing.
 fn hud_init(): i64 {
     hud_font = alloc(80);
     store64(hud_font + 0 * 8, glyph(7, 5, 5, 5, 7));  # 0

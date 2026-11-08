@@ -73,6 +73,7 @@ fn input_init(): i64 {
     return 0;
 }
 
+# Restore the terminal modes input_init saved. No-op if raw mode is not active.
 fn input_shutdown(): i64 {
     if (raw_active == 1) {
         syscall(16, 0, TCSETS, &orig_termios);

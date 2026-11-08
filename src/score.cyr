@@ -18,6 +18,7 @@
 # Source: the documented falling-block guideline scoring tables. Soft drop
 # awards one point per cell, hard drop two (applied in world.cyr).
 
+# Points for clearing n lines: 100/300/500/800 for n = 1..4, times (level + 1).
 fn score_for_lines(n, level): i64 {
     var base = 0;
     if (n == 1) { base = 100; }
@@ -61,4 +62,5 @@ fn combo_bonus(combo, level): i64 {
     return 50 * combo * (level + 1);
 }
 
+# Level reached after `lines` total cleared lines: one level per ten.
 fn level_for_lines(lines): i64 { return lines / 10; }

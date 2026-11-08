@@ -31,6 +31,7 @@ enum DasField {
     DAS_SIZE = 16;
 }
 
+# Allocate DAS state: no direction held, timer at zero.
 fn das_new(): i64 {
     var d = alloc(DAS_SIZE);
     store64(d + DAS_LAST, 0);
@@ -38,6 +39,7 @@ fn das_new(): i64 {
     return d;
 }
 
+# Forget the held direction and zero the timer.
 fn das_reset(d): i64 {
     store64(d + DAS_LAST, 0);
     store64(d + DAS_TIMER, 0);

@@ -18,6 +18,7 @@
 #
 # Self-contained — only load8/store8 builtins. Include before world.cyr.
 
+# Advance the 64-bit LCG state by one step (wraps mod 2^64).
 fn rng_next_state(s): i64 { return s * 6364136223846793005 + 1442695040888963407; }
 
 # 0..6 from a state word — upper bits, masked to a non-negative 31-bit int.
